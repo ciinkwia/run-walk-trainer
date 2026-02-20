@@ -1,0 +1,403 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+:root {
+    --warmup: #f59e0b;
+    --run: #ef4444;
+    --walk: #3b82f6;
+    --cooldown: #8b5cf6;
+    --bg: #0f172a;
+    --surface: #1e293b;
+    --surface2: #334155;
+    --text: #f1f5f9;
+    --text-dim: #94a3b8;
+    --accent: #22d3ee;
+}
+
+body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+}
+
+.app {
+    width: 100%;
+    max-width: 480px;
+    padding: 20px;
+}
+
+header {
+    text-align: center;
+    margin-bottom: 24px;
+}
+
+header h1 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-bottom: 16px;
+    color: var(--accent);
+}
+
+nav {
+    display: flex;
+    gap: 4px;
+    background: var(--surface);
+    border-radius: 12px;
+    padding: 4px;
+}
+
+.nav-btn {
+    flex: 1;
+    padding: 10px;
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 0.9rem;
+    font-weight: 600;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.nav-btn.active {
+    background: var(--surface2);
+    color: var(--text);
+}
+
+.view {
+    display: none;
+}
+
+.view.active {
+    display: block;
+}
+
+/* Timer Ring */
+.timer-ring-container {
+    position: relative;
+    width: 240px;
+    height: 240px;
+    margin: 0 auto 24px;
+}
+
+.timer-ring {
+    width: 100%;
+    height: 100%;
+    transform: rotate(-90deg);
+}
+
+.timer-ring-bg {
+    fill: none;
+    stroke: var(--surface);
+    stroke-width: 8;
+}
+
+.timer-ring-progress {
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 8;
+    stroke-linecap: round;
+    stroke-dasharray: 565.48;
+    stroke-dashoffset: 0;
+    transition: stroke 0.5s, stroke-dashoffset 0.3s linear;
+}
+
+.timer-center {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+}
+
+.phase-label {
+    font-size: 0.85rem;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+    color: var(--text-dim);
+    transition: color 0.3s;
+}
+
+.timer-display {
+    font-size: 2.8rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+}
+
+.phase-timer {
+    font-size: 1rem;
+    color: var(--text-dim);
+    margin-top: 4px;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Workout Info Cards */
+.workout-info {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.info-card {
+    background: var(--surface);
+    border-radius: 12px;
+    padding: 12px 8px;
+    text-align: center;
+}
+
+.info-label {
+    display: block;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-dim);
+    margin-bottom: 4px;
+}
+
+.info-value {
+    font-size: 1rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Progress Bar */
+.progress-bar-container {
+    position: relative;
+    height: 28px;
+    background: var(--surface);
+    border-radius: 14px;
+    margin-bottom: 24px;
+    overflow: hidden;
+}
+
+.progress-segments {
+    display: flex;
+    height: 100%;
+    width: 100%;
+}
+
+.progress-segment {
+    height: 100%;
+    transition: opacity 0.3s;
+}
+
+.progress-segment.warmup { background: var(--warmup); }
+.progress-segment.run { background: var(--run); }
+.progress-segment.walk { background: var(--walk); }
+.progress-segment.cooldown { background: var(--cooldown); }
+.progress-segment.future { opacity: 0.3; }
+
+.progress-marker {
+    position: absolute;
+    top: -2px;
+    width: 3px;
+    height: 32px;
+    background: white;
+    border-radius: 2px;
+    left: 0%;
+    transition: left 0.3s linear;
+    box-shadow: 0 0 6px rgba(255,255,255,0.5);
+}
+
+/* Controls */
+.controls {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 20px;
+}
+
+.ctrl-btn {
+    flex: 1;
+    padding: 14px;
+    border: none;
+    border-radius: 12px;
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s;
+    color: white;
+    background: var(--accent);
+}
+
+.ctrl-btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(34, 211, 238, 0.3);
+}
+
+.ctrl-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.ctrl-btn.danger {
+    background: #dc2626;
+}
+
+.ctrl-btn.danger:hover:not(:disabled) {
+    box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
+}
+
+#btn-pause {
+    background: var(--surface2);
+}
+
+/* Volume */
+.volume-control {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: var(--surface);
+    border-radius: 12px;
+}
+
+.volume-control label {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    white-space: nowrap;
+}
+
+#volume-slider {
+    flex: 1;
+    accent-color: var(--accent);
+    height: 4px;
+}
+
+/* Phase Colors */
+.phase-warmup .phase-label { color: var(--warmup); }
+.phase-warmup .timer-ring-progress { stroke: var(--warmup); }
+
+.phase-run .phase-label { color: var(--run); }
+.phase-run .timer-ring-progress { stroke: var(--run); }
+
+.phase-walk .phase-label { color: var(--walk); }
+.phase-walk .timer-ring-progress { stroke: var(--walk); }
+
+.phase-cooldown .phase-label { color: var(--cooldown); }
+.phase-cooldown .timer-ring-progress { stroke: var(--cooldown); }
+
+/* History */
+.history-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.history-header h2 {
+    font-size: 1.2rem;
+}
+
+.clear-btn {
+    padding: 6px 14px;
+    border: 1px solid var(--surface2);
+    background: transparent;
+    color: var(--text-dim);
+    border-radius: 8px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.clear-btn:hover {
+    border-color: #dc2626;
+    color: #dc2626;
+}
+
+.history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.empty-msg {
+    text-align: center;
+    color: var(--text-dim);
+    padding: 40px 0;
+}
+
+.history-entry {
+    background: var(--surface);
+    border-radius: 12px;
+    padding: 16px;
+    border-left: 4px solid var(--accent);
+}
+
+.history-entry.incomplete {
+    border-left-color: var(--warmup);
+}
+
+.history-date {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+}
+
+.history-stats {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.history-stat {
+    display: flex;
+    flex-direction: column;
+}
+
+.history-stat-label {
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.history-stat-value {
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.history-stat-value.completed { color: #22c55e; }
+.history-stat-value.stopped { color: var(--warmup); }
+
+/* Pulse animation for active phase */
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+
+.phase-active .phase-label {
+    animation: pulse 2s ease-in-out infinite;
+}
+
+/* Legend */
+.progress-legend {
+    display: flex;
+    justify-content: center;
+    gap: 16px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+}
+
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.7rem;
+    color: var(--text-dim);
+}
+
+.legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+}

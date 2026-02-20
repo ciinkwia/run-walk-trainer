@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Run/Walk Interval Trainer</title>
+
+    <!-- PWA -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#0f172a">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Run/Walk">
+    <link rel="apple-touch-icon" href="icon-192.svg">
+
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app">
+        <header>
+            <h1>Run/Walk Trainer</h1>
+            <nav>
+                <button class="nav-btn active" data-view="workout">Workout</button>
+                <button class="nav-btn" data-view="history">History</button>
+            </nav>
+        </header>
+
+        <!-- Workout View -->
+        <div id="workout-view" class="view active">
+            <div class="timer-ring-container">
+                <svg class="timer-ring" viewBox="0 0 200 200">
+                    <circle class="timer-ring-bg" cx="100" cy="100" r="90" />
+                    <circle class="timer-ring-progress" cx="100" cy="100" r="90" />
+                </svg>
+                <div class="timer-center">
+                    <div class="phase-label" id="phase-label">READY</div>
+                    <div class="timer-display" id="timer-display">30:00</div>
+                    <div class="phase-timer" id="phase-timer"></div>
+                </div>
+            </div>
+
+            <div class="workout-info">
+                <div class="info-card">
+                    <span class="info-label">Elapsed</span>
+                    <span class="info-value" id="elapsed-time">00:00</span>
+                </div>
+                <div class="info-card">
+                    <span class="info-label">Remaining</span>
+                    <span class="info-value" id="remaining-time">30:00</span>
+                </div>
+                <div class="info-card">
+                    <span class="info-label">Phase</span>
+                    <span class="info-value" id="current-phase">--</span>
+                </div>
+            </div>
+
+            <div class="progress-bar-container">
+                <div class="progress-segments" id="progress-segments"></div>
+                <div class="progress-marker" id="progress-marker"></div>
+            </div>
+
+            <div class="controls">
+                <button class="ctrl-btn" id="btn-start">START</button>
+                <button class="ctrl-btn" id="btn-pause" disabled>PAUSE</button>
+                <button class="ctrl-btn danger" id="btn-stop" disabled>STOP</button>
+            </div>
+
+            <div class="volume-control">
+                <label for="volume-slider">Voice Volume</label>
+                <input type="range" id="volume-slider" min="0" max="1" step="0.1" value="0.8">
+            </div>
+        </div>
+
+        <!-- History View -->
+        <div id="history-view" class="view">
+            <div class="history-header">
+                <h2>Workout History</h2>
+                <button class="clear-btn" id="btn-clear-history">Clear All</button>
+            </div>
+            <div class="history-list" id="history-list">
+                <p class="empty-msg">No workouts yet. Start your first session!</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+    <script>
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('./sw.js');
+        }
+    </script>
+</body>
+</html>
