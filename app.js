@@ -1,4 +1,13 @@
 // ============================================================
+// Firebase imports
+// ============================================================
+import {
+    auth, firestore, googleProvider,
+    signInWithPopup, signOut, onAuthStateChanged,
+    collection, addDoc, getDocs, deleteDoc, doc, query, orderBy, serverTimestamp
+} from './firebase-config.js';
+
+// ============================================================
 // Workout Structure
 // ============================================================
 // Total: 30 minutes (1800 seconds)
@@ -6,21 +15,19 @@
 // Intervals: 5:00 - 25:00 (1200s) — 60s run / 90s walk, repeating
 // Cool-down: 25:00 - 30:00 (300s)
 
-const TOTAL_DURATION = 1800; // 30 minutes in seconds
-const WARMUP_END = 300;      // 5 min
-const INTERVAL_END = 1500;   // 25 min
+const TOTAL_DURATION = 1800;
+const WARMUP_END = 300;
+const INTERVAL_END = 1500;
 const RUN_DURATION = 60;
 const WALK_DURATION = 90;
 
 // ============================================================
-// Build phase schedule (precompute every phase boundary)
+// Build phase schedule
 // ============================================================
 function buildPhaseSchedule() {
     const phases = [];
-    // Warm-up
     phases.push({ type: 'warmup', label: 'Warm Up', start: 0, end: WARMUP_END });
 
-    // Intervals
     let t = WARMUP_END;
     while (t < INTERVAL_END) {
         const runEnd = Math.min(t + RUN_DURATION, INTERVAL_END);
@@ -33,9 +40,7 @@ function buildPhaseSchedule() {
         }
     }
 
-    // Cool-down
     phases.push({ type: 'cooldown', label: 'Cool Down', start: INTERVAL_END, end: TOTAL_DURATION });
-
     return phases;
 }
 
@@ -61,6 +66,16 @@ const $volumeSlider = document.getElementById('volume-slider');
 const $historyList  = document.getElementById('history-list');
 const $btnClear     = document.getElementById('btn-clear-history');
 
+// Auth DOM
+const $btnSignIn    = document.getElementById('btn-sign-in');
+const $btnSignOut   = document.getElementById('btn-sign-out');
+const $userInfo     = document.getElementById('user-info');
+const $userName     = document.getElementById('user-name');
+const $userAvatar   = document.getElementById('user-avatar');
+const $syncStatus   = document.getElementById('sync-status');
+const $syncText     = document.getElementById('sync-text');
+const $syncDot      = document.querySelector('.sync-dot');
+
 // Nav
 document.querySelectorAll('.nav-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -82,7 +97,24 @@ let isPaused = false;
 let currentPhaseIndex = -1;
 let sessionStartTime = null;
 
-const RING_CIRCUMFERENCE = 2 * Math.PI * 90; // ~565.48
+const RING_CIRCUMFERENCE = 2 * Math.PI * 90;
+
+// ============================================================
+// Auth state
+// ============================================================
+let currentUser = null;
+let isOnline = navigator.onLine;
+
+window.addEventListener('online', () => {
+    isOnline = true;
+    updateSyncStatus('synced');
+    if (currentUser) syncLocalToCloud();
+});
+
+window.addEventListener('offline', () => {
+    isOnline = false;
+    updateSyncStatus('offline');
+});
 
 // ============================================================
 // Voice / Speech Synthesis
@@ -93,21 +125,13 @@ function findBestVoice() {
     const voices = speechSynthesis.getVoices();
     if (!voices.length) return null;
 
-    // Priority list: prefer natural/premium male English (British) voices
     const priorities = [
-        // Microsoft Edge / Windows natural voices
         (v) => /\b(Ryan|George)\b/i.test(v.name) && /Natural/i.test(v.name),
-        // Google UK English Male
         (v) => /Google UK English Male/i.test(v.name),
-        // Any British English male natural voice
         (v) => v.lang.startsWith('en-GB') && /male|ryan|george|daniel|james/i.test(v.name),
-        // Any English natural/enhanced voice (male-sounding names)
         (v) => v.lang.startsWith('en') && /Natural|Enhanced|Premium/i.test(v.name) && /male|ryan|george|daniel|james|david/i.test(v.name),
-        // Any British English voice
         (v) => v.lang.startsWith('en-GB'),
-        // Any English voice with "Natural" or "Enhanced"
         (v) => v.lang.startsWith('en') && /Natural|Enhanced|Premium/i.test(v.name),
-        // Fallback: any English voice
         (v) => v.lang.startsWith('en'),
     ];
 
@@ -118,7 +142,6 @@ function findBestVoice() {
     return null;
 }
 
-// Voices load asynchronously on some browsers
 if ('speechSynthesis' in window) {
     preferredVoice = findBestVoice();
     speechSynthesis.addEventListener('voiceschanged', () => {
@@ -182,7 +205,7 @@ function getPhaseAt(sec) {
     for (let i = 0; i < PHASES.length; i++) {
         if (sec >= PHASES[i].start && sec < PHASES[i].end) return i;
     }
-    return PHASES.length - 1; // last phase
+    return PHASES.length - 1;
 }
 
 // ============================================================
@@ -194,12 +217,10 @@ function updateDisplay() {
     $elapsed.textContent = fmt(elapsedSeconds);
     $remaining.textContent = fmt(remaining);
 
-    // Ring progress (counts down)
     const offset = RING_CIRCUMFERENCE * (1 - elapsedSeconds / TOTAL_DURATION);
     $ringProgress.style.strokeDasharray = RING_CIRCUMFERENCE;
     $ringProgress.style.strokeDashoffset = offset;
 
-    // Phase detection
     const pi = getPhaseAt(elapsedSeconds);
     const phase = PHASES[pi];
     const phaseRemaining = phase.end - elapsedSeconds;
@@ -208,10 +229,8 @@ function updateDisplay() {
     $phaseTimer.textContent = fmt(phaseRemaining);
     $currentPhase.textContent = phase.label;
 
-    // Phase color class
     $ringContainer.className = 'timer-ring-container phase-active phase-' + phase.type;
 
-    // Announce phase transitions
     if (pi !== currentPhaseIndex) {
         currentPhaseIndex = pi;
         announcePhase(phase);
@@ -237,7 +256,6 @@ function tick() {
     elapsedSeconds++;
     updateDisplay();
 
-    // Countdown warnings at 3 seconds before phase ends
     const pi = getPhaseAt(elapsedSeconds);
     const phase = PHASES[pi];
     const phaseRemaining = phase.end - elapsedSeconds;
@@ -261,7 +279,6 @@ function tick() {
 function startWorkout() {
     if (isRunning) return;
 
-    // Fresh start
     elapsedSeconds = 0;
     currentPhaseIndex = -1;
     isRunning = true;
@@ -282,13 +299,11 @@ function pauseWorkout() {
     if (!isRunning) return;
 
     if (isPaused) {
-        // Resume
         isPaused = false;
         timerInterval = setInterval(tick, 1000);
         $btnPause.textContent = 'PAUSE';
         speak("Resumed.");
     } else {
-        // Pause
         isPaused = true;
         clearInterval(timerInterval);
         timerInterval = null;
@@ -349,7 +364,7 @@ $btnPause.addEventListener('click', pauseWorkout);
 $btnStop.addEventListener('click', stopWorkout);
 
 // ============================================================
-// IndexedDB — long-term storage
+// IndexedDB — local storage (offline-first)
 // ============================================================
 const DB_NAME = 'WorkoutTrainerDB';
 const DB_VERSION = 1;
@@ -368,31 +383,6 @@ function openDB() {
         req.onsuccess = () => resolve(req.result);
         req.onerror = () => reject(req.error);
     });
-}
-
-async function saveSession(completed) {
-    const session = {
-        date: sessionStartTime.toISOString(),
-        dateLabel: sessionStartTime.toLocaleDateString('en-US', {
-            weekday: 'short', year: 'numeric', month: 'short', day: 'numeric'
-        }),
-        timeLabel: sessionStartTime.toLocaleTimeString('en-US', {
-            hour: '2-digit', minute: '2-digit'
-        }),
-        totalSeconds: elapsedSeconds,
-        totalFormatted: fmt(elapsedSeconds),
-        completed: completed,
-        phases: summarizePhases()
-    };
-
-    try {
-        const db = await openDB();
-        const tx = db.transaction(STORE_NAME, 'readwrite');
-        tx.objectStore(STORE_NAME).add(session);
-        await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = rej; });
-    } catch (err) {
-        console.error('Failed to save session:', err);
-    }
 }
 
 function summarizePhases() {
@@ -416,9 +406,144 @@ function summarizePhases() {
 }
 
 // ============================================================
-// History rendering
+// Save session — dual write (IndexedDB + Firestore)
 // ============================================================
-async function getAllSessions() {
+async function saveSession(completed) {
+    const session = {
+        date: sessionStartTime.toISOString(),
+        dateLabel: sessionStartTime.toLocaleDateString('en-US', {
+            weekday: 'short', year: 'numeric', month: 'short', day: 'numeric'
+        }),
+        timeLabel: sessionStartTime.toLocaleTimeString('en-US', {
+            hour: '2-digit', minute: '2-digit'
+        }),
+        totalSeconds: elapsedSeconds,
+        totalFormatted: fmt(elapsedSeconds),
+        completed: completed,
+        phases: summarizePhases()
+    };
+
+    // 1. Always save to IndexedDB (works offline)
+    try {
+        const db = await openDB();
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        tx.objectStore(STORE_NAME).add(session);
+        await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = rej; });
+    } catch (err) {
+        console.error('Failed to save to IndexedDB:', err);
+    }
+
+    // 2. If signed in and online, also save to Firestore
+    if (currentUser && isOnline) {
+        await saveToFirestore(session);
+    }
+}
+
+// ============================================================
+// Firestore helpers
+// ============================================================
+async function saveToFirestore(session) {
+    try {
+        updateSyncStatus('syncing');
+        const userSessionsRef = collection(firestore, 'users', currentUser.uid, 'sessions');
+        await addDoc(userSessionsRef, {
+            ...session,
+            createdAt: serverTimestamp()
+        });
+        updateSyncStatus('synced');
+    } catch (err) {
+        console.error('Failed to save to Firestore:', err);
+        updateSyncStatus('error');
+    }
+}
+
+async function getCloudSessions() {
+    try {
+        const userSessionsRef = collection(firestore, 'users', currentUser.uid, 'sessions');
+        const q = query(userSessionsRef, orderBy('date', 'desc'));
+        const snapshot = await getDocs(q);
+        return snapshot.docs.map(d => ({
+            firestoreId: d.id,
+            ...d.data()
+        }));
+    } catch (err) {
+        console.error('Failed to fetch from Firestore:', err);
+        return [];
+    }
+}
+
+async function clearFirestoreSessions() {
+    try {
+        const userSessionsRef = collection(firestore, 'users', currentUser.uid, 'sessions');
+        const snapshot = await getDocs(userSessionsRef);
+        const deletes = snapshot.docs.map(d =>
+            deleteDoc(doc(firestore, 'users', currentUser.uid, 'sessions', d.id))
+        );
+        await Promise.all(deletes);
+    } catch (err) {
+        console.error('Failed to clear Firestore:', err);
+    }
+}
+
+// ============================================================
+// Sync functions
+// ============================================================
+async function syncLocalToCloud() {
+    if (!currentUser || !isOnline) return;
+
+    updateSyncStatus('syncing');
+
+    try {
+        const localSessions = await getLocalSessions();
+        const cloudSessions = await getCloudSessions();
+
+        // Find sessions in local but not in cloud (by date string)
+        const cloudDates = new Set(cloudSessions.map(s => s.date));
+        const toUpload = localSessions.filter(s => !cloudDates.has(s.date));
+
+        for (const session of toUpload) {
+            const { id, ...data } = session; // strip IndexedDB id
+            await saveToFirestore(data);
+        }
+
+        updateSyncStatus('synced');
+        console.log(`Synced ${toUpload.length} sessions to cloud`);
+    } catch (err) {
+        console.error('Sync to cloud failed:', err);
+        updateSyncStatus('error');
+    }
+}
+
+async function syncCloudToLocal() {
+    if (!currentUser || !isOnline) return;
+
+    try {
+        const cloudSessions = await getCloudSessions();
+        const localSessions = await getLocalSessions();
+
+        const localDates = new Set(localSessions.map(s => s.date));
+        const toDownload = cloudSessions.filter(s => !localDates.has(s.date));
+
+        if (toDownload.length > 0) {
+            const db = await openDB();
+            for (const session of toDownload) {
+                const { firestoreId, createdAt, ...localSession } = session;
+                const tx = db.transaction(STORE_NAME, 'readwrite');
+                tx.objectStore(STORE_NAME).add(localSession);
+                await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = rej; });
+            }
+        }
+
+        console.log(`Downloaded ${toDownload.length} sessions from cloud`);
+    } catch (err) {
+        console.error('Sync from cloud failed:', err);
+    }
+}
+
+// ============================================================
+// Get sessions (local + cloud merged)
+// ============================================================
+async function getLocalSessions() {
     try {
         const db = await openDB();
         const tx = db.transaction(STORE_NAME, 'readonly');
@@ -433,6 +558,36 @@ async function getAllSessions() {
     }
 }
 
+async function getAllSessions() {
+    const localSessions = await getLocalSessions();
+
+    // If not signed in or offline, return local only
+    if (!currentUser || !isOnline) {
+        return localSessions;
+    }
+
+    // Merge with cloud (local takes precedence on duplicates)
+    try {
+        const cloudSessions = await getCloudSessions();
+        const merged = new Map();
+
+        localSessions.forEach(s => merged.set(s.date, s));
+        cloudSessions.forEach(s => {
+            if (!merged.has(s.date)) {
+                const { firestoreId, createdAt, ...clean } = s;
+                merged.set(s.date, clean);
+            }
+        });
+
+        return Array.from(merged.values());
+    } catch {
+        return localSessions;
+    }
+}
+
+// ============================================================
+// History rendering
+// ============================================================
 async function renderHistory() {
     const sessions = await getAllSessions();
 
@@ -441,7 +596,6 @@ async function renderHistory() {
         return;
     }
 
-    // Sort newest first
     sessions.sort((a, b) => new Date(b.date) - new Date(a.date));
 
     $historyList.innerHTML = sessions.map(s => `
@@ -471,25 +625,118 @@ async function renderHistory() {
 
 async function clearHistory() {
     if (!confirm('Delete all workout history? This cannot be undone.')) return;
+
+    // Clear IndexedDB
     try {
         const db = await openDB();
         const tx = db.transaction(STORE_NAME, 'readwrite');
         tx.objectStore(STORE_NAME).clear();
         await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = rej; });
-        renderHistory();
     } catch (err) {
-        console.error('Failed to clear history:', err);
+        console.error('Failed to clear IndexedDB:', err);
     }
+
+    // Clear Firestore if signed in
+    if (currentUser && isOnline) {
+        await clearFirestoreSessions();
+    }
+
+    renderHistory();
 }
 
 $btnClear.addEventListener('click', clearHistory);
+
+// ============================================================
+// Auth UI
+// ============================================================
+function updateAuthUI() {
+    if (currentUser) {
+        $btnSignIn.style.display = 'none';
+        $userInfo.style.display = 'flex';
+        $userName.textContent = currentUser.displayName || 'User';
+        $userAvatar.src = currentUser.photoURL || '';
+        $syncStatus.style.display = 'flex';
+        updateSyncStatus(isOnline ? 'synced' : 'offline');
+    } else {
+        $btnSignIn.style.display = 'flex';
+        $userInfo.style.display = 'none';
+        $syncStatus.style.display = 'none';
+    }
+}
+
+function updateSyncStatus(state) {
+    if (!$syncDot || !$syncText) return;
+    switch (state) {
+        case 'synced':
+            $syncDot.className = 'sync-dot';
+            $syncText.textContent = 'Synced';
+            break;
+        case 'syncing':
+            $syncDot.className = 'sync-dot syncing';
+            $syncText.textContent = 'Syncing...';
+            break;
+        case 'offline':
+            $syncDot.className = 'sync-dot error';
+            $syncText.textContent = 'Offline';
+            break;
+        case 'error':
+            $syncDot.className = 'sync-dot error';
+            $syncText.textContent = 'Sync failed';
+            break;
+    }
+}
+
+async function handleSignIn() {
+    try {
+        $btnSignIn.disabled = true;
+        $btnSignIn.textContent = 'Signing in...';
+        const result = await signInWithPopup(auth, googleProvider);
+        currentUser = result.user;
+        updateAuthUI();
+        // Sync both directions
+        await syncLocalToCloud();
+        await syncCloudToLocal();
+    } catch (err) {
+        console.error('Sign-in error:', err);
+        if (err.code !== 'auth/popup-closed-by-user') {
+            alert('Sign-in failed. Please try again.');
+        }
+    } finally {
+        $btnSignIn.disabled = false;
+        $btnSignIn.innerHTML = `
+            <svg viewBox="0 0 48 48" width="18" height="18"><path fill="#4285F4" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#34A853" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#EA4335" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+            Sign In`;
+    }
+}
+
+async function handleSignOut() {
+    try {
+        await signOut(auth);
+        currentUser = null;
+        updateAuthUI();
+    } catch (err) {
+        console.error('Sign-out error:', err);
+    }
+}
+
+// Listen for auth state changes (persists across refreshes)
+onAuthStateChanged(auth, async (user) => {
+    currentUser = user;
+    updateAuthUI();
+    if (user && isOnline) {
+        await syncCloudToLocal();
+        await syncLocalToCloud();
+    }
+});
+
+$btnSignIn.addEventListener('click', handleSignIn);
+$btnSignOut.addEventListener('click', handleSignOut);
 
 // ============================================================
 // Init
 // ============================================================
 buildProgressBar();
 
-// Add legend above progress bar
 const legendHTML = `
 <div class="progress-legend">
     <div class="legend-item"><div class="legend-dot" style="background:var(--warmup)"></div>Warm Up</div>

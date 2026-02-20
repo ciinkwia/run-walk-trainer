@@ -37,11 +37,120 @@ header {
     margin-bottom: 24px;
 }
 
+.header-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
 header h1 {
     font-size: 1.5rem;
     font-weight: 700;
-    margin-bottom: 16px;
+    margin-bottom: 0;
     color: var(--accent);
+}
+
+/* Auth */
+.auth-section {
+    display: flex;
+    align-items: center;
+}
+
+.auth-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    background: var(--surface);
+    border: 1px solid var(--surface2);
+    color: var(--text);
+    border-radius: 8px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+
+.auth-btn:hover {
+    border-color: var(--accent);
+    background: var(--surface2);
+}
+
+.user-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.user-avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 2px solid var(--accent);
+}
+
+.user-name {
+    font-size: 0.8rem;
+    color: var(--text);
+    max-width: 100px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.auth-btn-small {
+    padding: 5px 10px;
+    background: transparent;
+    border: 1px solid var(--surface2);
+    color: var(--text-dim);
+    border-radius: 6px;
+    font-size: 0.7rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.auth-btn-small:hover {
+    border-color: #dc2626;
+    color: #dc2626;
+}
+
+/* Sync status */
+.sync-status {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+}
+
+.sync-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #22c55e;
+}
+
+.sync-dot.syncing {
+    background: var(--warmup);
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+.sync-dot.error {
+    background: #dc2626;
+}
+
+@media (max-width: 380px) {
+    .header-top {
+        flex-direction: column;
+        gap: 10px;
+    }
+    .user-name {
+        display: none;
+    }
 }
 
 nav {
