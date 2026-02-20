@@ -117,75 +117,152 @@ window.addEventListener('offline', () => {
 });
 
 // ============================================================
-// Voice / Speech Synthesis — Google Translate TTS (natural voice)
+// Voice System — selectable voices + Google TTS option
 // ============================================================
-// Uses Google Translate's TTS endpoint which provides a natural
-// British English voice on ALL browsers, no robotic fallback.
-// Falls back to browser SpeechSynthesis only if audio fails.
+const GOOGLE_TTS_KEY = '__google_tts__';
+const $voiceSelect = document.getElementById('voice-select');
+const $btnTestVoice = document.getElementById('btn-test-voice');
 
-let audioQueue = [];
-let isAudioPlaying = false;
+let selectedVoiceId = localStorage.getItem('rw_voice') || GOOGLE_TTS_KEY;
+let audioPlaying = null;
 
+// Populate voice dropdown with all available browser voices + Google TTS
+function populateVoiceList() {
+    const voices = ('speechSynthesis' in window) ? speechSynthesis.getVoices() : [];
+
+    // Remember current selection
+    const current = $voiceSelect.value || selectedVoiceId;
+
+    // Clear and rebuild
+    $voiceSelect.innerHTML = '';
+
+    // Google TTS option always first
+    const gttsOpt = document.createElement('option');
+    gttsOpt.value = GOOGLE_TTS_KEY;
+    gttsOpt.textContent = 'Google TTS (British)';
+    $voiceSelect.appendChild(gttsOpt);
+
+    // Group voices by language
+    const english = voices.filter(v => v.lang.startsWith('en'));
+
+    // Sort: en-GB first, then en-US, then others. Within each, "Natural/Enhanced" first
+    english.sort((a, b) => {
+        const aGB = a.lang === 'en-GB' ? 0 : a.lang === 'en-US' ? 1 : 2;
+        const bGB = b.lang === 'en-GB' ? 0 : b.lang === 'en-US' ? 1 : 2;
+        if (aGB !== bGB) return aGB - bGB;
+        const aNat = /Natural|Enhanced|Premium/i.test(a.name) ? 0 : 1;
+        const bNat = /Natural|Enhanced|Premium/i.test(b.name) ? 0 : 1;
+        if (aNat !== bNat) return aNat - bNat;
+        return a.name.localeCompare(b.name);
+    });
+
+    if (english.length > 0) {
+        const sep = document.createElement('option');
+        sep.disabled = true;
+        sep.textContent = '── Device Voices ──';
+        $voiceSelect.appendChild(sep);
+    }
+
+    english.forEach((v, i) => {
+        const opt = document.createElement('option');
+        opt.value = `__voice_${i}`;
+        opt.dataset.voiceUri = v.voiceURI;
+        opt.dataset.lang = v.lang;
+        // Clean up the display name
+        let label = v.name.replace('Microsoft ', '').replace('Google ', '');
+        const tag = v.lang === 'en-GB' ? 'UK' : v.lang === 'en-US' ? 'US' : v.lang.split('-')[1] || '';
+        opt.textContent = `${label} (${tag})`;
+        $voiceSelect.appendChild(opt);
+    });
+
+    // Restore selection
+    const exists = Array.from($voiceSelect.options).some(o => o.value === current);
+    $voiceSelect.value = exists ? current : GOOGLE_TTS_KEY;
+    selectedVoiceId = $voiceSelect.value;
+}
+
+// Initialize voices
+if ('speechSynthesis' in window) {
+    populateVoiceList();
+    speechSynthesis.addEventListener('voiceschanged', populateVoiceList);
+}
+
+$voiceSelect.addEventListener('change', () => {
+    selectedVoiceId = $voiceSelect.value;
+    localStorage.setItem('rw_voice', selectedVoiceId);
+});
+
+// Test button
+$btnTestVoice.addEventListener('click', () => {
+    speak("Ready. Run in three.");
+});
+
+// ============================================================
+// Speak function — routes to Google TTS or browser voice
+// ============================================================
 function speak(text) {
     const vol = parseFloat($volumeSlider.value);
     if (vol === 0) return;
 
-    // Google Translate TTS — natural British English voice
+    // Stop anything currently playing
+    if (audioPlaying) {
+        audioPlaying.pause();
+        audioPlaying = null;
+    }
+    if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+    }
+
+    if (selectedVoiceId === GOOGLE_TTS_KEY) {
+        speakGoogleTTS(text, vol);
+    } else {
+        speakBrowserVoice(text, vol);
+    }
+}
+
+// Google Translate TTS — natural British English
+function speakGoogleTTS(text, vol) {
     const encoded = encodeURIComponent(text);
     const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=en-GB&client=tw-ob&q=${encoded}`;
 
     const audio = new Audio(url);
     audio.volume = vol;
+    audioPlaying = audio;
 
-    audio.onended = () => {
-        isAudioPlaying = false;
-        playNextInQueue();
-    };
-
+    audio.onended = () => { audioPlaying = null; };
     audio.onerror = () => {
-        // Fallback to browser SpeechSynthesis if Google TTS fails
-        isAudioPlaying = false;
-        speakFallback(text, vol);
-        playNextInQueue();
+        audioPlaying = null;
+        // Fallback to any browser voice if Google TTS fails
+        speakBrowserVoice(text, vol);
     };
 
-    // Queue to prevent overlapping
-    if (isAudioPlaying) {
-        audioQueue = [{ audio, text, vol }]; // replace queue (latest wins)
-    } else {
-        isAudioPlaying = true;
-        audio.play().catch(() => {
-            isAudioPlaying = false;
-            speakFallback(text, vol);
-        });
-    }
-}
-
-function playNextInQueue() {
-    if (audioQueue.length === 0) return;
-    const next = audioQueue.shift();
-    isAudioPlaying = true;
-    next.audio.play().catch(() => {
-        isAudioPlaying = false;
-        speakFallback(next.text, next.vol);
+    audio.play().catch(() => {
+        audioPlaying = null;
+        speakBrowserVoice(text, vol);
     });
 }
 
-// Browser SpeechSynthesis fallback
-function speakFallback(text, vol) {
+// Browser SpeechSynthesis — uses the selected voice
+function speakBrowserVoice(text, vol) {
     if (!('speechSynthesis' in window)) return;
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'en-GB';
-    utterance.rate = 0.88;
-    utterance.pitch = 0.75;
-    utterance.volume = vol;
 
-    // Try to find best available voice
-    const voices = speechSynthesis.getVoices();
-    const brit = voices.find(v => v.lang === 'en-GB') ||
-                 voices.find(v => v.lang.startsWith('en'));
-    if (brit) utterance.voice = brit;
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.volume = vol;
+    utterance.rate = 0.92;
+    utterance.pitch = 0.8;
+
+    // Find the selected voice by voiceURI
+    const selectedOption = $voiceSelect.selectedOptions[0];
+    if (selectedOption && selectedOption.dataset.voiceUri) {
+        const voices = speechSynthesis.getVoices();
+        const match = voices.find(v => v.voiceURI === selectedOption.dataset.voiceUri);
+        if (match) {
+            utterance.voice = match;
+            utterance.lang = match.lang;
+        }
+    } else {
+        utterance.lang = 'en-GB';
+    }
 
     window.speechSynthesis.speak(utterance);
 }

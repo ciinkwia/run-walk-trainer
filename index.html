@@ -84,9 +84,18 @@
                 <button class="ctrl-btn danger" id="btn-stop" disabled>STOP</button>
             </div>
 
-            <div class="volume-control">
-                <label for="volume-slider">Voice Volume</label>
-                <input type="range" id="volume-slider" min="0" max="1" step="0.1" value="0.8">
+            <div class="voice-settings">
+                <div class="voice-row">
+                    <label for="voice-select">Voice</label>
+                    <select id="voice-select" class="voice-dropdown">
+                        <option value="__google_tts__">Google TTS (British Female)</option>
+                    </select>
+                    <button id="btn-test-voice" class="test-btn">Test</button>
+                </div>
+                <div class="voice-row">
+                    <label for="volume-slider">Volume</label>
+                    <input type="range" id="volume-slider" min="0" max="1" step="0.1" value="0.8">
+                </div>
             </div>
         </div>
 
