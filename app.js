@@ -125,13 +125,25 @@ function findBestVoice() {
     const voices = speechSynthesis.getVoices();
     if (!voices.length) return null;
 
+    // Priority: deep, commanding British male voices
     const priorities = [
-        (v) => /\b(Ryan|George)\b/i.test(v.name) && /Natural/i.test(v.name),
+        // Windows — Microsoft Natural British male voices (best quality)
+        (v) => v.lang === 'en-GB' && /\b(Ryan|Thomas|George)\b/i.test(v.name) && /Natural/i.test(v.name),
+        // Windows — any Microsoft Natural British voice
+        (v) => v.lang === 'en-GB' && /Natural/i.test(v.name),
+        // Chrome/Android — Google UK English Male
         (v) => /Google UK English Male/i.test(v.name),
-        (v) => v.lang.startsWith('en-GB') && /male|ryan|george|daniel|james/i.test(v.name),
-        (v) => v.lang.startsWith('en') && /Natural|Enhanced|Premium/i.test(v.name) && /male|ryan|george|daniel|james|david/i.test(v.name),
-        (v) => v.lang.startsWith('en-GB'),
-        (v) => v.lang.startsWith('en') && /Natural|Enhanced|Premium/i.test(v.name),
+        // macOS/iOS — Daniel (British Siri voice, deep and authoritative)
+        (v) => v.lang === 'en-GB' && /\bDaniel\b/i.test(v.name),
+        // macOS/iOS — any British male voice
+        (v) => v.lang === 'en-GB' && /\b(Daniel|Oliver|Arthur|Malcolm)\b/i.test(v.name),
+        // Any platform — British English enhanced/premium voice
+        (v) => v.lang === 'en-GB' && /Enhanced|Premium/i.test(v.name),
+        // Any platform — any British English voice
+        (v) => v.lang === 'en-GB',
+        // Fallback — any English natural/enhanced male voice
+        (v) => v.lang.startsWith('en') && /Natural|Enhanced|Premium/i.test(v.name) && /male|ryan|thomas|george|daniel|james|david/i.test(v.name),
+        // Last resort — any English voice
         (v) => v.lang.startsWith('en'),
     ];
 
@@ -154,8 +166,8 @@ function speak(text) {
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     if (preferredVoice) utterance.voice = preferredVoice;
-    utterance.rate = 0.95;
-    utterance.pitch = 0.9;
+    utterance.rate = 0.88;   // slower, more deliberate
+    utterance.pitch = 0.75;  // deeper, commanding tone
     utterance.volume = parseFloat($volumeSlider.value);
     window.speechSynthesis.speak(utterance);
 }
@@ -240,13 +252,42 @@ function updateDisplay() {
 }
 
 function announcePhase(phase) {
-    const messages = {
-        warmup: "Warm up. Start walking at a comfortable pace.",
-        run: "Run! Pick up the pace.",
-        walk: "Walk. Slow it down and recover.",
-        cooldown: "Cool down. Great job! Slow your pace."
-    };
-    speak(messages[phase.type]);
+    // Vary the messages to keep it fresh across intervals
+    const runMessages = [
+        "Go! Run now!",
+        "Pick it up! Let's run!",
+        "Time to run. Push yourself!",
+        "Run! Give it everything!",
+        "Move! Run now, no excuses!",
+        "Let's go! Full effort!",
+        "Run! Stay strong!",
+        "Push it! Run hard!",
+    ];
+    const walkMessages = [
+        "Walk. Recover.",
+        "Ease off. Walk it out.",
+        "Good work. Walk and breathe.",
+        "Slow it down. Recover now.",
+        "Walk. Control your breathing.",
+        "Bring it down. Steady walk.",
+        "Rest phase. Walk it off.",
+        "Walk. You've earned this rest.",
+    ];
+
+    switch (phase.type) {
+        case 'warmup':
+            speak("Let's begin. Warm up with a brisk walk.");
+            break;
+        case 'run':
+            speak(runMessages[Math.floor(Math.random() * runMessages.length)]);
+            break;
+        case 'walk':
+            speak(walkMessages[Math.floor(Math.random() * walkMessages.length)]);
+            break;
+        case 'cooldown':
+            speak("Brilliant effort. Cool down. Slow your pace right down.");
+            break;
+    }
 }
 
 // ============================================================
@@ -262,9 +303,15 @@ function tick() {
     if (phaseRemaining === 3) {
         if (pi < PHASES.length - 1) {
             const next = PHASES[pi + 1];
-            speak("Get ready to " + (next.type === 'run' ? 'run' : next.type === 'walk' ? 'walk' : next.label.toLowerCase()));
+            if (next.type === 'run') {
+                speak("Ready. Run in three.");
+            } else if (next.type === 'walk') {
+                speak("Three seconds. Then walk.");
+            } else {
+                speak("Switching in three.");
+            }
         } else {
-            speak("Almost done! 3 seconds left.");
+            speak("Nearly there. Three seconds.");
         }
     }
 
@@ -302,13 +349,13 @@ function pauseWorkout() {
         isPaused = false;
         timerInterval = setInterval(tick, 1000);
         $btnPause.textContent = 'PAUSE';
-        speak("Resumed.");
+        speak("Back to it. Let's go.");
     } else {
         isPaused = true;
         clearInterval(timerInterval);
         timerInterval = null;
         $btnPause.textContent = 'RESUME';
-        speak("Paused.");
+        speak("Paused. Take a moment.");
     }
 }
 
@@ -317,7 +364,7 @@ function stopWorkout() {
     clearInterval(timerInterval);
     timerInterval = null;
 
-    speak("Workout stopped.");
+    speak("Session ended. Well done for showing up.");
 
     saveSession(false);
     resetUI();
@@ -327,7 +374,7 @@ function completeWorkout() {
     clearInterval(timerInterval);
     timerInterval = null;
 
-    speak("Workout complete! Amazing job!");
+    speak("That's it. Thirty minutes, done. Outstanding work.");
 
     saveSession(true);
     resetUI();
