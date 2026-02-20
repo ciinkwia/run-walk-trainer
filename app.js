@@ -117,58 +117,76 @@ window.addEventListener('offline', () => {
 });
 
 // ============================================================
-// Voice / Speech Synthesis
+// Voice / Speech Synthesis — Google Translate TTS (natural voice)
 // ============================================================
-let preferredVoice = null;
+// Uses Google Translate's TTS endpoint which provides a natural
+// British English voice on ALL browsers, no robotic fallback.
+// Falls back to browser SpeechSynthesis only if audio fails.
 
-function findBestVoice() {
-    const voices = speechSynthesis.getVoices();
-    if (!voices.length) return null;
+let audioQueue = [];
+let isAudioPlaying = false;
 
-    // Priority: deep, commanding British male voices
-    const priorities = [
-        // Windows — Microsoft Natural British male voices (best quality)
-        (v) => v.lang === 'en-GB' && /\b(Ryan|Thomas|George)\b/i.test(v.name) && /Natural/i.test(v.name),
-        // Windows — any Microsoft Natural British voice
-        (v) => v.lang === 'en-GB' && /Natural/i.test(v.name),
-        // Chrome/Android — Google UK English Male
-        (v) => /Google UK English Male/i.test(v.name),
-        // macOS/iOS — Daniel (British Siri voice, deep and authoritative)
-        (v) => v.lang === 'en-GB' && /\bDaniel\b/i.test(v.name),
-        // macOS/iOS — any British male voice
-        (v) => v.lang === 'en-GB' && /\b(Daniel|Oliver|Arthur|Malcolm)\b/i.test(v.name),
-        // Any platform — British English enhanced/premium voice
-        (v) => v.lang === 'en-GB' && /Enhanced|Premium/i.test(v.name),
-        // Any platform — any British English voice
-        (v) => v.lang === 'en-GB',
-        // Fallback — any English natural/enhanced male voice
-        (v) => v.lang.startsWith('en') && /Natural|Enhanced|Premium/i.test(v.name) && /male|ryan|thomas|george|daniel|james|david/i.test(v.name),
-        // Last resort — any English voice
-        (v) => v.lang.startsWith('en'),
-    ];
+function speak(text) {
+    const vol = parseFloat($volumeSlider.value);
+    if (vol === 0) return;
 
-    for (const test of priorities) {
-        const match = voices.find(test);
-        if (match) return match;
+    // Google Translate TTS — natural British English voice
+    const encoded = encodeURIComponent(text);
+    const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=en-GB&client=tw-ob&q=${encoded}`;
+
+    const audio = new Audio(url);
+    audio.volume = vol;
+
+    audio.onended = () => {
+        isAudioPlaying = false;
+        playNextInQueue();
+    };
+
+    audio.onerror = () => {
+        // Fallback to browser SpeechSynthesis if Google TTS fails
+        isAudioPlaying = false;
+        speakFallback(text, vol);
+        playNextInQueue();
+    };
+
+    // Queue to prevent overlapping
+    if (isAudioPlaying) {
+        audioQueue = [{ audio, text, vol }]; // replace queue (latest wins)
+    } else {
+        isAudioPlaying = true;
+        audio.play().catch(() => {
+            isAudioPlaying = false;
+            speakFallback(text, vol);
+        });
     }
-    return null;
 }
 
-if ('speechSynthesis' in window) {
-    preferredVoice = findBestVoice();
-    speechSynthesis.addEventListener('voiceschanged', () => {
-        preferredVoice = findBestVoice();
+function playNextInQueue() {
+    if (audioQueue.length === 0) return;
+    const next = audioQueue.shift();
+    isAudioPlaying = true;
+    next.audio.play().catch(() => {
+        isAudioPlaying = false;
+        speakFallback(next.text, next.vol);
     });
 }
 
-function speak(text) {
+// Browser SpeechSynthesis fallback
+function speakFallback(text, vol) {
     if (!('speechSynthesis' in window)) return;
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
-    if (preferredVoice) utterance.voice = preferredVoice;
-    utterance.rate = 0.88;   // slower, more deliberate
-    utterance.pitch = 0.75;  // deeper, commanding tone
-    utterance.volume = parseFloat($volumeSlider.value);
+    utterance.lang = 'en-GB';
+    utterance.rate = 0.88;
+    utterance.pitch = 0.75;
+    utterance.volume = vol;
+
+    // Try to find best available voice
+    const voices = speechSynthesis.getVoices();
+    const brit = voices.find(v => v.lang === 'en-GB') ||
+                 voices.find(v => v.lang.startsWith('en'));
+    if (brit) utterance.voice = brit;
+
     window.speechSynthesis.speak(utterance);
 }
 
