@@ -66,6 +66,11 @@ const $volumeSlider = document.getElementById('volume-slider');
 const $historyList  = document.getElementById('history-list');
 const $btnClear     = document.getElementById('btn-clear-history');
 
+// Skip controls DOM
+const $skipControls = document.getElementById('skip-controls');
+const $btnPrev      = document.getElementById('btn-prev');
+const $btnNext      = document.getElementById('btn-next');
+
 // Auth DOM
 const $btnSignIn    = document.getElementById('btn-sign-in');
 const $btnSignOut   = document.getElementById('btn-sign-out');
@@ -473,6 +478,7 @@ async function startWorkout() {
     $btnStart.disabled = true;
     $btnPause.disabled = false;
     $btnStop.disabled = false;
+    $skipControls.style.display = 'flex';
 
     await acquireWakeLock();
 }
@@ -534,6 +540,7 @@ function resetUI() {
     $btnPause.disabled = true;
     $btnStop.disabled = true;
     $btnPause.textContent = 'PAUSE';
+    $skipControls.style.display = 'none';
 
     $phaseLabel.textContent = 'READY';
     $timerDisplay.textContent = '30:00';
@@ -553,6 +560,44 @@ function resetUI() {
 $btnStart.addEventListener('click', startWorkout);
 $btnPause.addEventListener('click', pauseWorkout);
 $btnStop.addEventListener('click', stopWorkout);
+
+// ============================================================
+// Skip / Rewind
+// ============================================================
+function jumpToSecond(targetSec) {
+    targetSec = Math.max(0, Math.min(targetSec, TOTAL_DURATION));
+    // Adjust totalPausedMs so wall-clock formula yields the target
+    totalPausedMs = Date.now() - startTimestamp - targetSec * 1000;
+    elapsedSeconds = targetSec;
+    currentPhaseIndex = -1; // force re-announce
+    updateDisplay();
+}
+
+function skipNext() {
+    if (!isRunning) return;
+    const pi = getPhaseAt(elapsedSeconds);
+    if (pi < PHASES.length - 1) {
+        jumpToSecond(PHASES[pi + 1].start);
+    }
+}
+
+function skipPrev() {
+    if (!isRunning) return;
+    const pi = getPhaseAt(elapsedSeconds);
+    const phase = PHASES[pi];
+    const intoPhase = elapsedSeconds - phase.start;
+    // If more than 3s into current phase, restart it; otherwise go to previous
+    if (intoPhase > 3 && pi >= 0) {
+        jumpToSecond(phase.start);
+    } else if (pi > 0) {
+        jumpToSecond(PHASES[pi - 1].start);
+    } else {
+        jumpToSecond(0);
+    }
+}
+
+$btnPrev.addEventListener('click', skipPrev);
+$btnNext.addEventListener('click', skipNext);
 
 // ============================================================
 // IndexedDB — local storage (offline-first)
