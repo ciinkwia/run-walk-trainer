@@ -1,5 +1,7 @@
-const CACHE_NAME = 'runwalk-v2';
-const ASSETS = [
+const CACHE_NAME = 'runwalk-v4';
+
+// App shell assets
+const APP_ASSETS = [
     './',
     './index.html',
     './style.css',
@@ -10,10 +12,42 @@ const ASSETS = [
     './icon-512.svg'
 ];
 
+// Pre-generated voice clips
+const AUDIO_ASSETS = [
+    './audio/warmup.mp3',
+    './audio/run_1.mp3',
+    './audio/run_2.mp3',
+    './audio/run_3.mp3',
+    './audio/run_4.mp3',
+    './audio/run_5.mp3',
+    './audio/run_6.mp3',
+    './audio/run_7.mp3',
+    './audio/run_8.mp3',
+    './audio/walk_1.mp3',
+    './audio/walk_2.mp3',
+    './audio/walk_3.mp3',
+    './audio/walk_4.mp3',
+    './audio/walk_5.mp3',
+    './audio/walk_6.mp3',
+    './audio/walk_7.mp3',
+    './audio/walk_8.mp3',
+    './audio/cooldown.mp3',
+    './audio/ready_run.mp3',
+    './audio/ready_walk.mp3',
+    './audio/ready_switch.mp3',
+    './audio/nearly_there.mp3',
+    './audio/paused.mp3',
+    './audio/resumed.mp3',
+    './audio/stopped.mp3',
+    './audio/completed.mp3',
+];
+
+const ALL_ASSETS = [...APP_ASSETS, ...AUDIO_ASSETS];
+
 // Install — cache all assets
 self.addEventListener('install', (event) => {
     event.waitUntil(
-        caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS))
+        caches.open(CACHE_NAME).then((cache) => cache.addAll(ALL_ASSETS))
     );
     self.skipWaiting();
 });
@@ -45,7 +79,7 @@ self.addEventListener('fetch', (event) => {
         return;
     }
 
-    // Cache-first for app shell assets
+    // Cache-first for app shell + audio assets
     event.respondWith(
         caches.match(event.request).then((cached) => {
             return cached || fetch(event.request).then((response) => {

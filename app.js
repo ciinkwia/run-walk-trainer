@@ -97,6 +97,14 @@ let isPaused = false;
 let currentPhaseIndex = -1;
 let sessionStartTime = null;
 
+// Wall-clock timing (survives background throttling)
+let startTimestamp = null;   // Date.now() when workout began
+let pauseTimestamp = null;   // Date.now() when paused
+let totalPausedMs = 0;       // cumulative ms spent paused
+
+// Wake Lock (keeps screen on during workout)
+let wakeLock = null;
+
 const RING_CIRCUMFERENCE = 2 * Math.PI * 90;
 
 // ============================================================
@@ -117,155 +125,193 @@ window.addEventListener('offline', () => {
 });
 
 // ============================================================
-// Voice System — selectable voices + Google TTS option
+// Wake Lock API — keep screen on during workout
 // ============================================================
-const GOOGLE_TTS_KEY = '__google_tts__';
-const $voiceSelect = document.getElementById('voice-select');
-const $btnTestVoice = document.getElementById('btn-test-voice');
-
-let selectedVoiceId = localStorage.getItem('rw_voice') || GOOGLE_TTS_KEY;
-let audioPlaying = null;
-
-// Populate voice dropdown with all available browser voices + Google TTS
-function populateVoiceList() {
-    const voices = ('speechSynthesis' in window) ? speechSynthesis.getVoices() : [];
-
-    // Remember current selection
-    const current = $voiceSelect.value || selectedVoiceId;
-
-    // Clear and rebuild
-    $voiceSelect.innerHTML = '';
-
-    // Google TTS option always first
-    const gttsOpt = document.createElement('option');
-    gttsOpt.value = GOOGLE_TTS_KEY;
-    gttsOpt.textContent = 'Google TTS (British)';
-    $voiceSelect.appendChild(gttsOpt);
-
-    // Group voices by language
-    const english = voices.filter(v => v.lang.startsWith('en'));
-
-    // Sort: en-GB first, then en-US, then others. Within each, "Natural/Enhanced" first
-    english.sort((a, b) => {
-        const aGB = a.lang === 'en-GB' ? 0 : a.lang === 'en-US' ? 1 : 2;
-        const bGB = b.lang === 'en-GB' ? 0 : b.lang === 'en-US' ? 1 : 2;
-        if (aGB !== bGB) return aGB - bGB;
-        const aNat = /Natural|Enhanced|Premium/i.test(a.name) ? 0 : 1;
-        const bNat = /Natural|Enhanced|Premium/i.test(b.name) ? 0 : 1;
-        if (aNat !== bNat) return aNat - bNat;
-        return a.name.localeCompare(b.name);
-    });
-
-    if (english.length > 0) {
-        const sep = document.createElement('option');
-        sep.disabled = true;
-        sep.textContent = '── Device Voices ──';
-        $voiceSelect.appendChild(sep);
+async function acquireWakeLock() {
+    if (!('wakeLock' in navigator)) return;
+    try {
+        wakeLock = await navigator.wakeLock.request('screen');
+        wakeLock.addEventListener('release', () => { wakeLock = null; });
+    } catch (err) {
+        console.log('Wake Lock failed:', err.message);
     }
-
-    english.forEach((v, i) => {
-        const opt = document.createElement('option');
-        opt.value = `__voice_${i}`;
-        opt.dataset.voiceUri = v.voiceURI;
-        opt.dataset.lang = v.lang;
-        // Clean up the display name
-        let label = v.name.replace('Microsoft ', '').replace('Google ', '');
-        const tag = v.lang === 'en-GB' ? 'UK' : v.lang === 'en-US' ? 'US' : v.lang.split('-')[1] || '';
-        opt.textContent = `${label} (${tag})`;
-        $voiceSelect.appendChild(opt);
-    });
-
-    // Restore selection
-    const exists = Array.from($voiceSelect.options).some(o => o.value === current);
-    $voiceSelect.value = exists ? current : GOOGLE_TTS_KEY;
-    selectedVoiceId = $voiceSelect.value;
 }
 
-// Initialize voices
-if ('speechSynthesis' in window) {
-    populateVoiceList();
-    speechSynthesis.addEventListener('voiceschanged', populateVoiceList);
+function releaseWakeLock() {
+    if (wakeLock) {
+        wakeLock.release();
+        wakeLock = null;
+    }
 }
 
-$voiceSelect.addEventListener('change', () => {
-    selectedVoiceId = $voiceSelect.value;
-    localStorage.setItem('rw_voice', selectedVoiceId);
-});
-
-// Test button
-$btnTestVoice.addEventListener('click', () => {
-    speak("Ready. Run in three.");
+// Re-acquire wake lock when returning to the tab (browser releases it on hide)
+document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState === 'visible' && isRunning && !isPaused) {
+        // Force an immediate tick to catch up the timer
+        tick();
+        await acquireWakeLock();
+    }
 });
 
 // ============================================================
-// Speak function — routes to Google TTS or browser voice
+// Voice System — pre-generated ElevenLabs audio clips
 // ============================================================
-function speak(text) {
+// All coaching phrases are pre-generated as MP3 files in /audio/
+// using ElevenLabs for natural, human-quality voice.
+// Falls back to browser SpeechSynthesis if audio files not found.
+
+const $btnTestVoice = document.getElementById('btn-test-voice');
+const AUDIO_PATH = './audio/';
+
+// Map every phrase to its audio filename
+const AUDIO_CLIPS = {
+    // Warm-up
+    "warmup":           "warmup.mp3",
+    // Run variants (8)
+    "run_1":            "run_1.mp3",
+    "run_2":            "run_2.mp3",
+    "run_3":            "run_3.mp3",
+    "run_4":            "run_4.mp3",
+    "run_5":            "run_5.mp3",
+    "run_6":            "run_6.mp3",
+    "run_7":            "run_7.mp3",
+    "run_8":            "run_8.mp3",
+    // Walk variants (8)
+    "walk_1":           "walk_1.mp3",
+    "walk_2":           "walk_2.mp3",
+    "walk_3":           "walk_3.mp3",
+    "walk_4":           "walk_4.mp3",
+    "walk_5":           "walk_5.mp3",
+    "walk_6":           "walk_6.mp3",
+    "walk_7":           "walk_7.mp3",
+    "walk_8":           "walk_8.mp3",
+    // Cooldown
+    "cooldown":         "cooldown.mp3",
+    // Countdown warnings
+    "ready_run":        "ready_run.mp3",
+    "ready_walk":       "ready_walk.mp3",
+    "ready_switch":     "ready_switch.mp3",
+    "nearly_there":     "nearly_there.mp3",
+    // Controls
+    "paused":           "paused.mp3",
+    "resumed":          "resumed.mp3",
+    "stopped":          "stopped.mp3",
+    "completed":        "completed.mp3",
+};
+
+// Audio cache: preloaded Audio elements
+const audioCache = {};
+let audioReady = false;
+let currentAudio = null;
+
+// Preload all audio clips into memory
+async function preloadAudio() {
+    const entries = Object.entries(AUDIO_CLIPS);
+    const results = await Promise.allSettled(
+        entries.map(async ([key, file]) => {
+            const audio = new Audio(AUDIO_PATH + file);
+            audio.preload = 'auto';
+            // Wait for it to be loadable
+            await new Promise((resolve, reject) => {
+                audio.oncanplaythrough = resolve;
+                audio.onerror = reject;
+                // Timeout after 5s
+                setTimeout(resolve, 5000);
+            });
+            audioCache[key] = audio;
+        })
+    );
+
+    const loaded = results.filter(r => r.status === 'fulfilled').length;
+    audioReady = loaded > 0;
+    console.log(`Audio: ${loaded}/${entries.length} clips loaded`);
+}
+
+// Play a clip by key
+function playClip(key) {
     const vol = parseFloat($volumeSlider.value);
     if (vol === 0) return;
 
-    // Stop anything currently playing
-    if (audioPlaying) {
-        audioPlaying.pause();
-        audioPlaying = null;
-    }
-    if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
+    // Stop any currently playing audio
+    if (currentAudio) {
+        currentAudio.pause();
+        currentAudio.currentTime = 0;
+        currentAudio = null;
     }
 
-    if (selectedVoiceId === GOOGLE_TTS_KEY) {
-        speakGoogleTTS(text, vol);
+    const cached = audioCache[key];
+    if (cached && audioReady) {
+        cached.volume = vol;
+        cached.currentTime = 0;
+        currentAudio = cached;
+        cached.play().catch(() => {
+            // If playback fails, fall back to speech synthesis
+            speakFallback(key);
+        });
     } else {
-        speakBrowserVoice(text, vol);
+        speakFallback(key);
     }
 }
 
-// Google Translate TTS — natural British English
-function speakGoogleTTS(text, vol) {
-    const encoded = encodeURIComponent(text);
-    const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=en-GB&client=tw-ob&q=${encoded}`;
+// Fallback text for each clip key (used if audio files are missing)
+const FALLBACK_TEXT = {
+    warmup:       "Let's begin. Warm up with a brisk walk.",
+    run_1:        "Go! Run now!",
+    run_2:        "Pick it up! Let's run!",
+    run_3:        "Time to run. Push yourself!",
+    run_4:        "Run! Give it everything!",
+    run_5:        "Move! Run now, no excuses!",
+    run_6:        "Let's go! Full effort!",
+    run_7:        "Run! Stay strong!",
+    run_8:        "Push it! Run hard!",
+    walk_1:       "Walk. Recover.",
+    walk_2:       "Ease off. Walk it out.",
+    walk_3:       "Good work. Walk and breathe.",
+    walk_4:       "Slow it down. Recover now.",
+    walk_5:       "Walk. Control your breathing.",
+    walk_6:       "Bring it down. Steady walk.",
+    walk_7:       "Rest phase. Walk it off.",
+    walk_8:       "Walk. You've earned this rest.",
+    cooldown:     "Brilliant effort. Cool down. Slow your pace right down.",
+    ready_run:    "Ready. Run in three.",
+    ready_walk:   "Three seconds. Then walk.",
+    ready_switch: "Switching in three.",
+    nearly_there: "Nearly there. Three seconds.",
+    paused:       "Paused. Take a moment.",
+    resumed:      "Back to it. Let's go.",
+    stopped:      "Session ended. Well done for showing up.",
+    completed:    "That's it. Thirty minutes, done. Outstanding work.",
+};
 
-    const audio = new Audio(url);
-    audio.volume = vol;
-    audioPlaying = audio;
-
-    audio.onended = () => { audioPlaying = null; };
-    audio.onerror = () => {
-        audioPlaying = null;
-        // Fallback to any browser voice if Google TTS fails
-        speakBrowserVoice(text, vol);
-    };
-
-    audio.play().catch(() => {
-        audioPlaying = null;
-        speakBrowserVoice(text, vol);
-    });
-}
-
-// Browser SpeechSynthesis — uses the selected voice
-function speakBrowserVoice(text, vol) {
+// Browser SpeechSynthesis fallback (if audio files not loaded)
+function speakFallback(key) {
+    const text = FALLBACK_TEXT[key] || key;
     if (!('speechSynthesis' in window)) return;
-
+    window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.volume = vol;
+    utterance.lang = 'en-GB';
     utterance.rate = 0.92;
     utterance.pitch = 0.8;
-
-    // Find the selected voice by voiceURI
-    const selectedOption = $voiceSelect.selectedOptions[0];
-    if (selectedOption && selectedOption.dataset.voiceUri) {
-        const voices = speechSynthesis.getVoices();
-        const match = voices.find(v => v.voiceURI === selectedOption.dataset.voiceUri);
-        if (match) {
-            utterance.voice = match;
-            utterance.lang = match.lang;
-        }
-    } else {
-        utterance.lang = 'en-GB';
-    }
-
+    utterance.volume = parseFloat($volumeSlider.value);
+    const voices = speechSynthesis.getVoices();
+    const brit = voices.find(v => v.lang === 'en-GB') ||
+                 voices.find(v => v.lang.startsWith('en'));
+    if (brit) utterance.voice = brit;
     window.speechSynthesis.speak(utterance);
 }
+
+// Legacy speak() wrapper — used by non-phase code
+function speak(clipKey) {
+    playClip(clipKey);
+}
+
+// Test button
+$btnTestVoice.addEventListener('click', () => {
+    playClip('ready_run');
+});
+
+// Start preloading audio immediately
+preloadAudio();
 
 // ============================================================
 // Progress bar segments
@@ -347,66 +393,54 @@ function updateDisplay() {
 }
 
 function announcePhase(phase) {
-    // Vary the messages to keep it fresh across intervals
-    const runMessages = [
-        "Go! Run now!",
-        "Pick it up! Let's run!",
-        "Time to run. Push yourself!",
-        "Run! Give it everything!",
-        "Move! Run now, no excuses!",
-        "Let's go! Full effort!",
-        "Run! Stay strong!",
-        "Push it! Run hard!",
-    ];
-    const walkMessages = [
-        "Walk. Recover.",
-        "Ease off. Walk it out.",
-        "Good work. Walk and breathe.",
-        "Slow it down. Recover now.",
-        "Walk. Control your breathing.",
-        "Bring it down. Steady walk.",
-        "Rest phase. Walk it off.",
-        "Walk. You've earned this rest.",
-    ];
-
     switch (phase.type) {
         case 'warmup':
-            speak("Let's begin. Warm up with a brisk walk.");
+            playClip('warmup');
             break;
         case 'run':
-            speak(runMessages[Math.floor(Math.random() * runMessages.length)]);
+            playClip('run_' + (Math.floor(Math.random() * 8) + 1));
             break;
         case 'walk':
-            speak(walkMessages[Math.floor(Math.random() * walkMessages.length)]);
+            playClip('walk_' + (Math.floor(Math.random() * 8) + 1));
             break;
         case 'cooldown':
-            speak("Brilliant effort. Cool down. Slow your pace right down.");
+            playClip('cooldown');
             break;
     }
 }
 
 // ============================================================
-// Timer tick
+// Timer tick — wall-clock based
 // ============================================================
 function tick() {
-    elapsedSeconds++;
+    if (!isRunning || isPaused) return;
+
+    const now = Date.now();
+    const realElapsed = Math.floor((now - startTimestamp - totalPausedMs) / 1000);
+    const prev = elapsedSeconds;
+    elapsedSeconds = Math.min(realElapsed, TOTAL_DURATION);
+
+    // If no time has actually passed, skip
+    if (elapsedSeconds === prev) return;
+
     updateDisplay();
 
+    // Check countdown warnings (only if we haven't jumped past them)
     const pi = getPhaseAt(elapsedSeconds);
     const phase = PHASES[pi];
     const phaseRemaining = phase.end - elapsedSeconds;
-    if (phaseRemaining === 3) {
+    if (phaseRemaining === 3 || (prev < phase.end - 3 && elapsedSeconds >= phase.end - 3 && phaseRemaining <= 3 && phaseRemaining > 0)) {
         if (pi < PHASES.length - 1) {
             const next = PHASES[pi + 1];
             if (next.type === 'run') {
-                speak("Ready. Run in three.");
+                playClip('ready_run');
             } else if (next.type === 'walk') {
-                speak("Three seconds. Then walk.");
+                playClip('ready_walk');
             } else {
-                speak("Switching in three.");
+                playClip('ready_switch');
             }
         } else {
-            speak("Nearly there. Three seconds.");
+            playClip('nearly_there');
         }
     }
 
@@ -418,7 +452,7 @@ function tick() {
 // ============================================================
 // Controls
 // ============================================================
-function startWorkout() {
+async function startWorkout() {
     if (isRunning) return;
 
     elapsedSeconds = 0;
@@ -426,31 +460,44 @@ function startWorkout() {
     isRunning = true;
     isPaused = false;
     sessionStartTime = new Date();
+    startTimestamp = Date.now();
+    totalPausedMs = 0;
+    pauseTimestamp = null;
 
     buildProgressBar();
     updateDisplay();
 
-    timerInterval = setInterval(tick, 1000);
+    // Use 250ms interval for snappy catch-up (wall-clock does the math)
+    timerInterval = setInterval(tick, 250);
 
     $btnStart.disabled = true;
     $btnPause.disabled = false;
     $btnStop.disabled = false;
+
+    await acquireWakeLock();
 }
 
-function pauseWorkout() {
+async function pauseWorkout() {
     if (!isRunning) return;
 
     if (isPaused) {
+        // Resume — account for time spent paused
+        totalPausedMs += Date.now() - pauseTimestamp;
+        pauseTimestamp = null;
         isPaused = false;
-        timerInterval = setInterval(tick, 1000);
+        timerInterval = setInterval(tick, 250);
         $btnPause.textContent = 'PAUSE';
-        speak("Back to it. Let's go.");
+        playClip('resumed');
+        await acquireWakeLock();
     } else {
+        // Pause
+        pauseTimestamp = Date.now();
         isPaused = true;
         clearInterval(timerInterval);
         timerInterval = null;
         $btnPause.textContent = 'RESUME';
-        speak("Paused. Take a moment.");
+        playClip('paused');
+        releaseWakeLock();
     }
 }
 
@@ -459,7 +506,8 @@ function stopWorkout() {
     clearInterval(timerInterval);
     timerInterval = null;
 
-    speak("Session ended. Well done for showing up.");
+    playClip('stopped');
+    releaseWakeLock();
 
     saveSession(false);
     resetUI();
@@ -469,7 +517,8 @@ function completeWorkout() {
     clearInterval(timerInterval);
     timerInterval = null;
 
-    speak("That's it. Thirty minutes, done. Outstanding work.");
+    playClip('completed');
+    releaseWakeLock();
 
     saveSession(true);
     resetUI();
