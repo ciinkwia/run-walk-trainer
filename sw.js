@@ -1,4 +1,4 @@
-const CACHE_NAME = 'runwalk-v5';
+const CACHE_NAME = 'runwalk-v6';
 
 // App shell assets
 const APP_ASSETS = [
@@ -42,12 +42,17 @@ const AUDIO_ASSETS = [
     './audio/completed.mp3',
 ];
 
-const ALL_ASSETS = [...APP_ASSETS, ...AUDIO_ASSETS];
-
-// Install — cache all assets
+// Install — cache app shell (required), then try audio (optional)
 self.addEventListener('install', (event) => {
     event.waitUntil(
-        caches.open(CACHE_NAME).then((cache) => cache.addAll(ALL_ASSETS))
+        caches.open(CACHE_NAME).then(async (cache) => {
+            // App shell must succeed
+            await cache.addAll(APP_ASSETS);
+            // Audio files are optional — cache individually, ignore failures
+            for (const url of AUDIO_ASSETS) {
+                try { await cache.add(url); } catch (e) { /* not yet generated */ }
+            }
+        })
     );
     self.skipWaiting();
 });
