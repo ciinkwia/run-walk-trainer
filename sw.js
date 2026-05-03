@@ -1,4 +1,4 @@
-const CACHE_NAME = 'runwalk-v11';
+const CACHE_NAME = 'runwalk-v12';
 
 // App shell assets
 const APP_ASSETS = [
