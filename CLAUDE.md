@@ -4,7 +4,7 @@
 
 ---
 
-A PWA that runs a **fixed 30-minute run/walk interval workout** with a ringed timer, color-coded phase bar, and pre-recorded ElevenLabs British-English voice coaching. Offline-first via IndexedDB with optional Google sign-in for Firestore cross-device sync.
+A PWA that runs a **fixed 30-minute run/walk interval workout** with a ringed timer, color-coded phase bar, and pre-recorded Australian-female voice coaching (Microsoft Edge TTS, voice `en-AU-NatashaNeural`). Offline-first via IndexedDB with optional Google sign-in for Firestore cross-device sync.
 
 **Owner:** ciinkwia (jarridbaldwin@gmail.com)
 **Stack:** Vanilla HTML/CSS/JS (ES modules), Firebase Web SDK v11, IndexedDB, service worker
@@ -30,7 +30,7 @@ Constants at the top of `app.js`: `TOTAL_DURATION`, `WARMUP_END`, `INTERVAL_END`
 ```
 Browser (PWA, mobile-first, dark theme)
    │
-   ├── Service Worker (sw.js, CACHE_NAME 'runwalk-v8')
+   ├── Service Worker (sw.js, CACHE_NAME 'runwalk-v11')
    │     ├── App shell: index.html, style.css, app.js, firebase-config.js, manifest, icons
    │     └── Audio clips: ./audio/*.mp3 (warm-up, 8 run variants, 8 walk variants, cooldown, cues)
    │
@@ -76,7 +76,7 @@ realElapsed = (Date.now() - startTimestamp - totalPausedMs) / 1000
 
 ## Audio / voice (Web Audio API, pre-scheduled, chime + voice layered)
 
-All coaching lines are **pre-generated MP3s in `audio/`** using ElevenLabs (British English). Played through the **Web Audio API**, not `<Audio>` elements — this is critical for the background-cue fix below.
+All coaching lines are **pre-generated MP3s in `audio/`** using **Microsoft Edge TTS, voice `en-AU-NatashaNeural`** (Australian female, friendly + positive — coach-y). Free, no API key. Re-generate any time by editing `lines` in `C:\Users\jarri\AI Projects\agentmail\generate_runwalk_audio.py` and running `python generate_runwalk_audio.py` (requires `pip install edge-tts`). Played through the **Web Audio API**, not `<Audio>` elements — this is critical for the background-cue fix below.
 
 **Voice clips** (defined in `AUDIO_CLIPS` map in `app.js`):
 - `warmup`, `cooldown`
@@ -167,7 +167,7 @@ Firebase config in `firebase-config.js` is a **web API key** which is fine to sh
 ## Gotchas / things to know
 
 ### 1. Bump `CACHE_NAME` in `sw.js` when shipping code/asset changes
-Currently `runwalk-v8`. If you change `app.js`, `style.css`, `index.html`, or any audio clip, bump this. The SW activate step cleans old caches keyed on the version.
+Currently `runwalk-v11`. If you change `app.js`, `style.css`, `index.html`, or any audio clip, bump this. The SW activate step cleans old caches keyed on the version.
 
 ### 2. Wall-clock timer, not accumulating counter
 Don't "simplify" the timer to `elapsed += 1` on each tick. Mobile browsers throttle background intervals and the workout will drift by minutes. The `Date.now()` math is intentional.
@@ -234,4 +234,4 @@ The silent keep-alive buffer (`startSilentKeepalive`) is what keeps the OS treat
 
 ---
 
-**Last updated:** 2026-05-02 — v8: synthesized two-tone chimes (`chime_run` ascending, `chime_walk` descending) at every phase boundary; voice announcement layered 500ms behind chime; pre-warning voice cues (`ready_run`/`walk`/`switch`, `nearly_there`) dropped from scheduler to cut chatter (~31 → ~17 voice events per workout). v7: Web Audio refactor for background-proof scheduled cues + MediaSession lock-screen controls.
+**Last updated:** 2026-05-03 — v11: filled previously-empty `audio/` folder with all 26 voice clips generated via Microsoft Edge TTS (`en-AU-NatashaNeural`, Australian female). Was missing since project inception — voice cues had been silently no-op'ing through the Web Audio scheduler (only chimes played). Generation script at `agentmail/generate_runwalk_audio.py`. v10: full-screen layout — body/`.app` use `100dvh` flex column with safe-area-inset padding; `.voice-settings` pinned to bottom via `margin-top: auto`; timer ring scales with `min(280px, 70vw)` + `aspect-ratio: 1`. Was rendering content in top ~40% of tall phones with empty space below — now fills viewport like a native app. v9: PNG icons for Android Chrome install prompt (manifest icons were SVG-only, blocking install). v8: synthesized two-tone chimes at every phase boundary, voice announcement layered 500ms behind chime; pre-warning cues dropped to cut chatter (~31 → ~17 voice events). v7: Web Audio refactor for background-proof scheduled cues + MediaSession lock-screen controls.
