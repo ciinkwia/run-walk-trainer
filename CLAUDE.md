@@ -30,7 +30,7 @@ Constants at the top of `app.js`: `TOTAL_DURATION`, `WARMUP_END`, `INTERVAL_END`
 ```
 Browser (PWA, mobile-first, dark theme)
    │
-   ├── Service Worker (sw.js, CACHE_NAME 'runwalk-v11')
+   ├── Service Worker (sw.js, CACHE_NAME 'runwalk-v13')
    │     ├── App shell: index.html, style.css, app.js, firebase-config.js, manifest, icons
    │     └── Audio clips: ./audio/*.mp3 (warm-up, 8 run variants, 8 walk variants, cooldown, cues)
    │
@@ -167,7 +167,10 @@ Firebase config in `firebase-config.js` is a **web API key** which is fine to sh
 ## Gotchas / things to know
 
 ### 1. Bump `CACHE_NAME` in `sw.js` when shipping code/asset changes
-Currently `runwalk-v11`. If you change `app.js`, `style.css`, `index.html`, or any audio clip, bump this. The SW activate step cleans old caches keyed on the version.
+Currently `runwalk-v13`. If you change `app.js`, `style.css`, `index.html`, or any audio clip, bump this. The SW activate step cleans old caches keyed on the version.
+
+### 1b. App shell is NETWORK-FIRST, static assets are CACHE-FIRST (v13+)
+`sw.js` `isAppShell()` matches `index.html` / `style.css` / `app.js` / `firebase-config.js` / `manifest.json` / trailing-slash root → network-first (try fresh, fall back to cache when offline). Icons + audio MP3s → cache-first (fast, basically never change). This means **code changes land on the next reload** without an uninstall+reinstall. v10/v11/v12 changes were held back on Erica's installed PWA because the old SW was cache-first and kept serving stale CSS even after a new SW activated. Don't revert this unless you have a good reason.
 
 ### 2. Wall-clock timer, not accumulating counter
 Don't "simplify" the timer to `elapsed += 1` on each tick. Mobile browsers throttle background intervals and the workout will drift by minutes. The `Date.now()` math is intentional.
@@ -234,4 +237,4 @@ The silent keep-alive buffer (`startSilentKeepalive`) is what keeps the OS treat
 
 ---
 
-**Last updated:** 2026-05-03 — v11: filled previously-empty `audio/` folder with all 26 voice clips generated via Microsoft Edge TTS (`en-AU-NatashaNeural`, Australian female). Was missing since project inception — voice cues had been silently no-op'ing through the Web Audio scheduler (only chimes played). Generation script at `agentmail/generate_runwalk_audio.py`. v10: full-screen layout — body/`.app` use `100dvh` flex column with safe-area-inset padding; `.voice-settings` pinned to bottom via `margin-top: auto`; timer ring scales with `min(280px, 70vw)` + `aspect-ratio: 1`. Was rendering content in top ~40% of tall phones with empty space below — now fills viewport like a native app. v9: PNG icons for Android Chrome install prompt (manifest icons were SVG-only, blocking install). v8: synthesized two-tone chimes at every phase boundary, voice announcement layered 500ms behind chime; pre-warning cues dropped to cut chatter (~31 → ~17 voice events). v7: Web Audio refactor for background-proof scheduled cues + MediaSession lock-screen controls.
+**Last updated:** 2026-05-03 — v13: SW now network-first for app shell (HTML/CSS/JS/manifest), cache-first for static assets (icons, audio). Means code changes land on the next reload without uninstall+reinstall — v10/v11/v12 had been held back on Erica's PWA because the old cache-first SW kept serving stale CSS. v12: `.timer-ring-container` got `flex: 1` + `min-height: 240px` so it actually absorbs available vertical space (v10's `width: min(280px, 70vw)` + `margin-top: auto` on voice-settings only moved volume to the bottom but left timer small). Timer digits now scale with `clamp(2.8rem, 11vw, 4rem)`. v11: filled previously-empty `audio/` folder with 26 voice clips generated via Microsoft Edge TTS (`en-AU-NatashaNeural`, Australian female). Generation script at `agentmail/generate_runwalk_audio.py`. v10: initial 100dvh + safe-area layout pass (improved but didn't fully fill — see v12). v9: PNG icons for Android Chrome install prompt (manifest icons were SVG-only, blocking install). v8: synthesized two-tone chimes at every phase boundary, voice announcement layered 500ms behind chime; pre-warning cues dropped to cut chatter (~31 → ~17 voice events). v7: Web Audio refactor for background-proof scheduled cues + MediaSession lock-screen controls.
