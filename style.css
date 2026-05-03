@@ -17,24 +17,44 @@
     --accent: #22d3ee;
 }
 
+html, body { height: 100%; }
+
 body {
     font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
     background: var(--bg);
     color: var(--text);
-    min-height: 100vh;
+    min-height: 100dvh;
+    height: 100dvh;
     display: flex;
     justify-content: center;
+    overflow: hidden;
+    overscroll-behavior: none;
 }
 
 .app {
     width: 100%;
     max-width: 480px;
-    padding: 20px;
+    height: 100dvh;
+    padding: max(14px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
 }
+
+header { flex-shrink: 0; }
+
+.view {
+    display: none;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+}
+
+.view.active { display: flex; }
 
 header {
     text-align: center;
-    margin-bottom: 24px;
+    margin-bottom: 14px;
 }
 
 .header-top {
@@ -190,9 +210,11 @@ nav {
 /* Timer Ring */
 .timer-ring-container {
     position: relative;
-    width: 240px;
-    height: 240px;
-    margin: 0 auto 24px;
+    width: min(280px, 70vw);
+    height: auto;
+    aspect-ratio: 1;
+    margin: 0 auto 16px;
+    flex-shrink: 0;
 }
 
 .timer-ring {
@@ -254,7 +276,8 @@ nav {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: 10px;
-    margin-bottom: 20px;
+    margin-bottom: 14px;
+    flex-shrink: 0;
 }
 
 .info-card {
@@ -285,8 +308,9 @@ nav {
     height: 28px;
     background: var(--surface);
     border-radius: 14px;
-    margin-bottom: 24px;
+    margin-bottom: 16px;
     overflow: hidden;
+    flex-shrink: 0;
 }
 
 .progress-segments {
@@ -322,7 +346,8 @@ nav {
 .controls {
     display: flex;
     gap: 12px;
-    margin-bottom: 20px;
+    margin-bottom: 12px;
+    flex-shrink: 0;
 }
 
 .ctrl-btn {
@@ -364,7 +389,8 @@ nav {
 .skip-controls {
     display: flex;
     gap: 12px;
-    margin-bottom: 20px;
+    margin-bottom: 12px;
+    flex-shrink: 0;
 }
 
 .skip-btn {
@@ -402,6 +428,8 @@ nav {
     padding: 14px 16px;
     background: var(--surface);
     border-radius: 12px;
+    flex-shrink: 0;
+    margin-top: auto;       /* anchors to bottom of viewport */
 }
 
 .voice-row {
@@ -460,6 +488,7 @@ nav {
     justify-content: space-between;
     align-items: center;
     margin-bottom: 16px;
+    flex-shrink: 0;
 }
 
 .history-header h2 {
@@ -486,6 +515,9 @@ nav {
     display: flex;
     flex-direction: column;
     gap: 10px;
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
 }
 
 .empty-msg {
@@ -552,8 +584,9 @@ nav {
     display: flex;
     justify-content: center;
     gap: 16px;
-    margin-bottom: 12px;
+    margin-bottom: 8px;
     flex-wrap: wrap;
+    flex-shrink: 0;
 }
 
 .legend-item {
