@@ -1,4 +1,4 @@
-const CACHE_NAME = 'runwalk-v8';
+const CACHE_NAME = 'runwalk-v9';
 
 // App shell assets
 const APP_ASSETS = [
@@ -8,6 +8,9 @@ const APP_ASSETS = [
     './app.js',
     './firebase-config.js',
     './manifest.json',
+    './icon-192.png',
+    './icon-512.png',
+    './icon-512-maskable.png',
     './icon-192.svg',
     './icon-512.svg'
 ];
