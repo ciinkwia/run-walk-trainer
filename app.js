@@ -155,110 +155,262 @@ document.addEventListener('visibilitychange', async () => {
         // Force an immediate tick to catch up the timer
         tick();
         await acquireWakeLock();
+        // Defensive: some browsers may suspend AudioContext on hide
+        if (audioCtx && audioCtx.state === 'suspended') {
+            try { await audioCtx.resume(); } catch {}
+        }
     }
 });
 
 // ============================================================
-// Voice System — pre-generated ElevenLabs audio clips
+// Voice System — pre-generated ElevenLabs audio clips via Web Audio API
 // ============================================================
-// All coaching phrases are pre-generated as MP3 files in /audio/
-// using ElevenLabs for natural, human-quality voice.
-// Falls back to browser SpeechSynthesis if audio files not found.
+// All coaching phrases are pre-generated MP3s in /audio/. Played through
+// Web Audio API so cues can be PRE-SCHEDULED at workout start using
+// AudioContext.currentTime — sample-accurate scheduling that fires even
+// when Android Chrome background-throttles JS timers (the bug that
+// made phase-switch announcements miss while the screen was off).
+// SpeechSynthesis fallback if a clip fails to load/decode.
 
 const $btnTestVoice = document.getElementById('btn-test-voice');
 const AUDIO_PATH = './audio/';
 
-// Map every phrase to its audio filename
 const AUDIO_CLIPS = {
-    // Warm-up
-    "warmup":           "warmup.mp3",
-    // Run variants (8)
-    "run_1":            "run_1.mp3",
-    "run_2":            "run_2.mp3",
-    "run_3":            "run_3.mp3",
-    "run_4":            "run_4.mp3",
-    "run_5":            "run_5.mp3",
-    "run_6":            "run_6.mp3",
-    "run_7":            "run_7.mp3",
-    "run_8":            "run_8.mp3",
-    // Walk variants (8)
-    "walk_1":           "walk_1.mp3",
-    "walk_2":           "walk_2.mp3",
-    "walk_3":           "walk_3.mp3",
-    "walk_4":           "walk_4.mp3",
-    "walk_5":           "walk_5.mp3",
-    "walk_6":           "walk_6.mp3",
-    "walk_7":           "walk_7.mp3",
-    "walk_8":           "walk_8.mp3",
-    // Cooldown
-    "cooldown":         "cooldown.mp3",
-    // Countdown warnings
-    "ready_run":        "ready_run.mp3",
-    "ready_walk":       "ready_walk.mp3",
-    "ready_switch":     "ready_switch.mp3",
-    "nearly_there":     "nearly_there.mp3",
-    // Controls
-    "paused":           "paused.mp3",
-    "resumed":          "resumed.mp3",
-    "stopped":          "stopped.mp3",
-    "completed":        "completed.mp3",
+    "warmup":       "warmup.mp3",
+    "run_1":        "run_1.mp3",
+    "run_2":        "run_2.mp3",
+    "run_3":        "run_3.mp3",
+    "run_4":        "run_4.mp3",
+    "run_5":        "run_5.mp3",
+    "run_6":        "run_6.mp3",
+    "run_7":        "run_7.mp3",
+    "run_8":        "run_8.mp3",
+    "walk_1":       "walk_1.mp3",
+    "walk_2":       "walk_2.mp3",
+    "walk_3":       "walk_3.mp3",
+    "walk_4":       "walk_4.mp3",
+    "walk_5":       "walk_5.mp3",
+    "walk_6":       "walk_6.mp3",
+    "walk_7":       "walk_7.mp3",
+    "walk_8":       "walk_8.mp3",
+    "cooldown":     "cooldown.mp3",
+    "ready_run":    "ready_run.mp3",
+    "ready_walk":   "ready_walk.mp3",
+    "ready_switch": "ready_switch.mp3",
+    "nearly_there": "nearly_there.mp3",
+    "paused":       "paused.mp3",
+    "resumed":      "resumed.mp3",
+    "stopped":      "stopped.mp3",
+    "completed":    "completed.mp3",
 };
 
-// Audio cache: preloaded Audio elements
-const audioCache = {};
-let audioReady = false;
-let currentAudio = null;
+let audioCtx = null;
+let audioGain = null;
+let silentSource = null;
+const audioRawBuffers = {};       // key -> ArrayBuffer (fetched MP3 bytes)
+const audioBuffers = {};          // key -> AudioBuffer (decoded)
+let audioFetched = false;
+let audioDecoded = false;
+let scheduledSources = [];        // BufferSourceNodes scheduled for the workout
+let currentImmediateSource = null;
 
-// Preload all audio clips into memory
-async function preloadAudio() {
+async function fetchAllAudio() {
     const entries = Object.entries(AUDIO_CLIPS);
-    const results = await Promise.allSettled(
-        entries.map(async ([key, file]) => {
-            const audio = new Audio(AUDIO_PATH + file);
-            audio.preload = 'auto';
-            // Wait for it to be loadable
-            await new Promise((resolve, reject) => {
-                audio.oncanplaythrough = resolve;
-                audio.onerror = reject;
-                // Timeout after 5s
-                setTimeout(resolve, 5000);
-            });
-            audioCache[key] = audio;
-        })
-    );
-
-    const loaded = results.filter(r => r.status === 'fulfilled').length;
-    audioReady = loaded > 0;
-    console.log(`Audio: ${loaded}/${entries.length} clips loaded`);
+    const results = await Promise.allSettled(entries.map(async ([key, file]) => {
+        const res = await fetch(AUDIO_PATH + file);
+        if (!res.ok) throw new Error('fetch failed: ' + file);
+        audioRawBuffers[key] = await res.arrayBuffer();
+    }));
+    const ok = results.filter(r => r.status === 'fulfilled').length;
+    audioFetched = ok > 0;
+    console.log(`Audio fetched: ${ok}/${entries.length}`);
 }
 
-// Play a clip by key
+async function ensureAudioCtx() {
+    if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        audioGain = audioCtx.createGain();
+        audioGain.gain.value = parseFloat($volumeSlider.value);
+        audioGain.connect(audioCtx.destination);
+    }
+    if (audioCtx.state === 'suspended') await audioCtx.resume();
+    return audioCtx;
+}
+
+async function decodeAllAudio() {
+    if (audioDecoded) return;
+    await ensureAudioCtx();
+    await Promise.all(Object.entries(audioRawBuffers).map(async ([key, raw]) => {
+        if (audioBuffers[key]) return;
+        try {
+            audioBuffers[key] = await audioCtx.decodeAudioData(raw.slice(0));
+        } catch (err) {
+            console.warn('decode failed:', key, err);
+        }
+    }));
+    audioDecoded = true;
+}
+
+// ============================================================
+// Chime synthesis — pleasant two-tone bells generated via Web Audio
+// (no MP3 round-trip; ~1KB of code instead of two extra audio files)
+// ============================================================
+function synthesizeBellBuffer(freq1, freq2, durationSec) {
+    const sr = audioCtx.sampleRate;
+    const length = Math.floor(sr * durationSec);
+    const buf = audioCtx.createBuffer(1, length, sr);
+    const data = buf.getChannelData(0);
+    const tone2Start = 0.18;  // 2nd note enters 180ms after the 1st
+
+    for (let i = 0; i < length; i++) {
+        const t = i / sr;
+        let sample = 0;
+        // Tone 1 — fundamental + 2nd & 3rd harmonics, exponential decay envelope
+        const t1 = t;
+        const env1 = Math.exp(-2.8 * t1) * (1 - Math.exp(-300 * t1));
+        sample += env1 * (
+            0.60 * Math.sin(2 * Math.PI * freq1     * t1) +
+            0.25 * Math.sin(2 * Math.PI * freq1 * 2 * t1) +
+            0.10 * Math.sin(2 * Math.PI * freq1 * 3 * t1)
+        );
+        // Tone 2 — same shape, delayed
+        if (t >= tone2Start) {
+            const t2 = t - tone2Start;
+            const env2 = Math.exp(-2.8 * t2) * (1 - Math.exp(-300 * t2));
+            sample += env2 * (
+                0.60 * Math.sin(2 * Math.PI * freq2     * t2) +
+                0.25 * Math.sin(2 * Math.PI * freq2 * 2 * t2) +
+                0.10 * Math.sin(2 * Math.PI * freq2 * 3 * t2)
+            );
+        }
+        data[i] = sample * 0.35;
+    }
+    return buf;
+}
+
+function generateChimeBuffers() {
+    if (!audioCtx) return;
+    if (audioBuffers['chime_run'] && audioBuffers['chime_walk']) return;
+    // Ascending G5 → C6 — energetic, "gear up"
+    audioBuffers['chime_run']  = synthesizeBellBuffer(784, 1047, 1.0);
+    // Descending C6 → G5 — calming, "ease down" (also used for warmup/cooldown)
+    audioBuffers['chime_walk'] = synthesizeBellBuffer(1047, 784, 1.0);
+}
+
+function chimeKeyFor(phaseType) {
+    return phaseType === 'run' ? 'chime_run' : 'chime_walk';
+}
+
+// Fire-and-forget chime (does NOT interrupt currentImmediateSource — chime
+// and voice announcement layer cleanly when called back-to-back)
+function playChimeNow(key) {
+    if (!audioCtx || !audioBuffers[key]) return;
+    const src = audioCtx.createBufferSource();
+    src.buffer = audioBuffers[key];
+    src.connect(audioGain);
+    src.start();
+}
+
+// Silent looping buffer keeps the AudioContext "active" so MediaSession
+// stays engaged (lock-screen controls + reduced chance of OS killing tab).
+function startSilentKeepalive() {
+    if (silentSource || !audioCtx) return;
+    const buf = audioCtx.createBuffer(1, audioCtx.sampleRate, audioCtx.sampleRate);
+    silentSource = audioCtx.createBufferSource();
+    silentSource.buffer = buf;
+    silentSource.loop = true;
+    silentSource.connect(audioCtx.destination);
+    silentSource.start();
+}
+
+function stopSilentKeepalive() {
+    if (silentSource) {
+        try { silentSource.stop(); } catch {}
+        silentSource = null;
+    }
+}
+
+// Play a clip immediately (paused/resumed/stopped/completed/test/skip-into-phase)
 function playClip(key) {
-    const vol = parseFloat($volumeSlider.value);
-    if (vol === 0) return;
-
-    // Stop any currently playing audio
-    if (currentAudio) {
-        currentAudio.pause();
-        currentAudio.currentTime = 0;
-        currentAudio = null;
-    }
-
-    const cached = audioCache[key];
-    if (cached && audioReady) {
-        cached.volume = vol;
-        cached.currentTime = 0;
-        currentAudio = cached;
-        cached.play().catch(() => {
-            // If playback fails, fall back to speech synthesis
-            speakFallback(key);
-        });
-    } else {
+    if (!audioCtx || !audioBuffers[key]) {
         speakFallback(key);
+        return;
+    }
+    if (currentImmediateSource) {
+        try { currentImmediateSource.stop(); } catch {}
+    }
+    const src = audioCtx.createBufferSource();
+    src.buffer = audioBuffers[key];
+    src.connect(audioGain);
+    src.start();
+    currentImmediateSource = src;
+    src.onended = () => {
+        if (currentImmediateSource === src) currentImmediateSource = null;
+    };
+}
+
+function scheduleCueAt(key, when) {
+    const buf = audioBuffers[key];
+    if (!buf || !audioCtx) return null;
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    src.connect(audioGain);
+    try { src.start(when); }
+    catch { src.start(audioCtx.currentTime); }
+    scheduledSources.push(src);
+    src.onended = () => {
+        const i = scheduledSources.indexOf(src);
+        if (i >= 0) scheduledSources.splice(i, 1);
+    };
+    return src;
+}
+
+function cancelAllScheduled() {
+    scheduledSources.forEach(s => { try { s.stop(0); } catch {} });
+    scheduledSources = [];
+}
+
+// Build the cue event list starting at fromSec. Each phase boundary gets:
+//   1. Chime (immediate, at p.start)             — the unmissable switch cue
+//   2. Voice announcement (~500ms after chime)   — tells you which phase
+// Pre-3s-warning voice cues (ready_run/walk/switch, nearly_there) were
+// removed in v8 to cut chatter — the chime IS the cue.
+function buildCueEvents(fromSec) {
+    const events = [];
+    for (let i = 0; i < PHASES.length; i++) {
+        const p = PHASES[i];
+        if (p.start >= fromSec) {
+            // Chime — exactly at phase boundary
+            events.push({
+                offsetSec: p.start - fromSec,
+                key: chimeKeyFor(p.type)
+            });
+            // Voice — slight delay so chime hits crisp first
+            let voiceKey;
+            switch (p.type) {
+                case 'warmup':   voiceKey = 'warmup'; break;
+                case 'run':      voiceKey = 'run_'  + (Math.floor(Math.random() * 8) + 1); break;
+                case 'walk':     voiceKey = 'walk_' + (Math.floor(Math.random() * 8) + 1); break;
+                case 'cooldown': voiceKey = 'cooldown'; break;
+            }
+            events.push({
+                offsetSec: (p.start - fromSec) + 0.5,
+                key: voiceKey
+            });
+        }
+    }
+    return events;
+}
+
+function scheduleAllCues(fromSec) {
+    cancelAllScheduled();
+    if (!audioCtx) return;
+    const t0 = audioCtx.currentTime;
+    for (const ev of buildCueEvents(fromSec)) {
+        scheduleCueAt(ev.key, t0 + ev.offsetSec);
     }
 }
 
-// Fallback text for each clip key (used if audio files are missing)
 const FALLBACK_TEXT = {
     warmup:       "Let's begin. Warm up with a brisk walk.",
     run_1:        "Go! Run now!",
@@ -288,7 +440,6 @@ const FALLBACK_TEXT = {
     completed:    "That's it. Thirty minutes, done. Outstanding work.",
 };
 
-// Browser SpeechSynthesis fallback (if audio files not loaded)
 function speakFallback(key) {
     const text = FALLBACK_TEXT[key] || key;
     if (!('speechSynthesis' in window)) return;
@@ -305,18 +456,67 @@ function speakFallback(key) {
     window.speechSynthesis.speak(utterance);
 }
 
-// Legacy speak() wrapper — used by non-phase code
-function speak(clipKey) {
-    playClip(clipKey);
-}
-
-// Test button
-$btnTestVoice.addEventListener('click', () => {
-    playClip('ready_run');
+// Volume slider drives the master gain in real time
+$volumeSlider.addEventListener('input', () => {
+    if (audioGain) audioGain.gain.value = parseFloat($volumeSlider.value);
 });
 
-// Start preloading audio immediately
-preloadAudio();
+// Test button — preview a real switch: chime + voice, just like mid-workout
+$btnTestVoice.addEventListener('click', async () => {
+    await ensureAudioCtx();
+    await decodeAllAudio();
+    generateChimeBuffers();
+    playChimeNow('chime_run');
+    setTimeout(() => playClip('run_1'), 500);
+});
+
+// ============================================================
+// MediaSession — lock-screen metadata + transport controls
+// ============================================================
+function setupMediaSessionHandlers() {
+    if (!('mediaSession' in navigator)) return;
+    try {
+        navigator.mediaSession.setActionHandler('play',  () => { if (isRunning && isPaused)  pauseWorkout(); });
+        navigator.mediaSession.setActionHandler('pause', () => { if (isRunning && !isPaused) pauseWorkout(); });
+        navigator.mediaSession.setActionHandler('stop',  () => { if (isRunning) stopWorkout(); });
+    } catch {}
+}
+
+function updateMediaSession(refreshMetadata = false) {
+    if (!('mediaSession' in navigator)) return;
+    if (!isRunning) {
+        navigator.mediaSession.metadata = null;
+        navigator.mediaSession.playbackState = 'none';
+        return;
+    }
+    if (refreshMetadata) {
+        const pi = getPhaseAt(elapsedSeconds);
+        const phase = PHASES[pi];
+        navigator.mediaSession.metadata = new MediaMetadata({
+            title:  phase.label,
+            artist: 'Run/Walk Trainer',
+            album:  '30-minute interval session',
+            artwork: [
+                { src: 'icon-192.svg', sizes: '192x192', type: 'image/svg+xml' },
+                { src: 'icon-512.svg', sizes: '512x512', type: 'image/svg+xml' },
+            ]
+        });
+    }
+    navigator.mediaSession.playbackState = isPaused ? 'paused' : 'playing';
+    if ('setPositionState' in navigator.mediaSession) {
+        try {
+            navigator.mediaSession.setPositionState({
+                duration: TOTAL_DURATION,
+                position: Math.min(elapsedSeconds, TOTAL_DURATION),
+                playbackRate: 1
+            });
+        } catch {}
+    }
+}
+
+// Kick off audio fetch + register MediaSession handlers
+fetchAllAudio();
+setupMediaSessionHandlers();
 
 // ============================================================
 // Progress bar segments
@@ -391,27 +591,27 @@ function updateDisplay() {
 
     if (pi !== currentPhaseIndex) {
         currentPhaseIndex = pi;
-        announcePhase(phase);
+        updateMediaSession(true);   // lock-screen title now reflects current phase
+    } else {
+        updateMediaSession(false);  // refresh position only
     }
 
     updateProgressBar();
 }
 
-function announcePhase(phase) {
+// Used when the user skips into the middle of a phase (scheduled cue won't fire
+// because the phase already started before the new fromSec). Plays chime + voice
+// just like a normal phase boundary.
+function announcePhaseImmediate(phase) {
+    playChimeNow(chimeKeyFor(phase.type));
+    let voiceKey;
     switch (phase.type) {
-        case 'warmup':
-            playClip('warmup');
-            break;
-        case 'run':
-            playClip('run_' + (Math.floor(Math.random() * 8) + 1));
-            break;
-        case 'walk':
-            playClip('walk_' + (Math.floor(Math.random() * 8) + 1));
-            break;
-        case 'cooldown':
-            playClip('cooldown');
-            break;
+        case 'warmup':   voiceKey = 'warmup'; break;
+        case 'run':      voiceKey = 'run_'  + (Math.floor(Math.random() * 8) + 1); break;
+        case 'walk':     voiceKey = 'walk_' + (Math.floor(Math.random() * 8) + 1); break;
+        case 'cooldown': voiceKey = 'cooldown'; break;
     }
+    setTimeout(() => playClip(voiceKey), 500);
 }
 
 // ============================================================
@@ -425,29 +625,14 @@ function tick() {
     const prev = elapsedSeconds;
     elapsedSeconds = Math.min(realElapsed, TOTAL_DURATION);
 
-    // If no time has actually passed, skip
     if (elapsedSeconds === prev) return;
 
     updateDisplay();
 
-    // Check countdown warnings (only if we haven't jumped past them)
-    const pi = getPhaseAt(elapsedSeconds);
-    const phase = PHASES[pi];
-    const phaseRemaining = phase.end - elapsedSeconds;
-    if (phaseRemaining === 3 || (prev < phase.end - 3 && elapsedSeconds >= phase.end - 3 && phaseRemaining <= 3 && phaseRemaining > 0)) {
-        if (pi < PHASES.length - 1) {
-            const next = PHASES[pi + 1];
-            if (next.type === 'run') {
-                playClip('ready_run');
-            } else if (next.type === 'walk') {
-                playClip('ready_walk');
-            } else {
-                playClip('ready_switch');
-            }
-        } else {
-            playClip('nearly_there');
-        }
-    }
+    // NOTE: phase announcements + 3s warnings are pre-scheduled via Web Audio
+    // in scheduleAllCues() at workout/resume/skip time — no audio fired here.
+    // This is what makes cues fire on time when Android background-throttles
+    // this setInterval (down to ~1Hz when the tab is hidden).
 
     if (elapsedSeconds >= TOTAL_DURATION) {
         completeWorkout();
@@ -470,9 +655,15 @@ async function startWorkout() {
     pauseTimestamp = null;
 
     buildProgressBar();
-    updateDisplay();
 
-    // Use 250ms interval for snappy catch-up (wall-clock does the math)
+    // Bring up Web Audio (we're inside a user gesture — required for AudioContext)
+    await ensureAudioCtx();
+    await decodeAllAudio();
+    generateChimeBuffers();
+    startSilentKeepalive();
+    scheduleAllCues(0);     // pre-schedules chimes + voice for every phase boundary
+
+    updateDisplay();         // also fires updateMediaSession(true) since phase index changed
     timerInterval = setInterval(tick, 250);
 
     $btnStart.disabled = true;
@@ -487,23 +678,28 @@ async function pauseWorkout() {
     if (!isRunning) return;
 
     if (isPaused) {
-        // Resume — account for time spent paused
+        // Resume — account for time spent paused, then re-schedule cues from current position
         totalPausedMs += Date.now() - pauseTimestamp;
         pauseTimestamp = null;
         isPaused = false;
         timerInterval = setInterval(tick, 250);
         $btnPause.textContent = 'PAUSE';
+        await ensureAudioCtx();
         playClip('resumed');
+        scheduleAllCues(elapsedSeconds);
         await acquireWakeLock();
+        updateMediaSession(true);
     } else {
-        // Pause
+        // Pause — cancel pending cues so they don't fire while paused
         pauseTimestamp = Date.now();
         isPaused = true;
         clearInterval(timerInterval);
         timerInterval = null;
         $btnPause.textContent = 'RESUME';
+        cancelAllScheduled();
         playClip('paused');
         releaseWakeLock();
+        updateMediaSession(false);
     }
 }
 
@@ -511,23 +707,29 @@ function stopWorkout() {
     if (!isRunning) return;
     clearInterval(timerInterval);
     timerInterval = null;
+    cancelAllScheduled();
 
     playClip('stopped');
     releaseWakeLock();
+    stopSilentKeepalive();
 
     saveSession(false);
     resetUI();
+    updateMediaSession(false);   // clears lock-screen metadata (isRunning is false now)
 }
 
 function completeWorkout() {
     clearInterval(timerInterval);
     timerInterval = null;
+    cancelAllScheduled();
 
     playClip('completed');
     releaseWakeLock();
+    stopSilentKeepalive();
 
     saveSession(true);
     resetUI();
+    updateMediaSession(false);
 }
 
 function resetUI() {
@@ -569,8 +771,19 @@ function jumpToSecond(targetSec) {
     // Adjust totalPausedMs so wall-clock formula yields the target
     totalPausedMs = Date.now() - startTimestamp - targetSec * 1000;
     elapsedSeconds = targetSec;
-    currentPhaseIndex = -1; // force re-announce
+    currentPhaseIndex = -1; // force MediaSession metadata refresh in updateDisplay
     updateDisplay();
+
+    if (isRunning && !isPaused) {
+        scheduleAllCues(targetSec);
+        // If we jumped INTO the middle of a phase, the scheduler won't include
+        // that phase's start announcement — fire it immediately.
+        const pi = getPhaseAt(targetSec);
+        const phase = PHASES[pi];
+        if (targetSec > phase.start) {
+            announcePhaseImmediate(phase);
+        }
+    }
 }
 
 function skipNext() {
