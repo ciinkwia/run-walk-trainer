@@ -3,7 +3,7 @@
 // ============================================================
 import {
     auth, firestore, googleProvider,
-    signInWithPopup, signOut, onAuthStateChanged,
+    signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged,
     collection, addDoc, getDocs, deleteDoc, doc, query, orderBy, serverTimestamp
 } from './firebase-config.js';
 
@@ -535,12 +535,13 @@ function buildProgressBar() {
 function updateProgressBar() {
     const segments = $progressSegs.querySelectorAll('.progress-segment');
     segments.forEach((seg, i) => {
+        seg.classList.remove('future', 'done', 'current');
         if (elapsedSeconds >= PHASES[i].end) {
-            seg.classList.remove('future');
+            seg.classList.add('done');       // already finished
         } else if (elapsedSeconds >= PHASES[i].start) {
-            seg.classList.remove('future');
+            seg.classList.add('current');    // in progress right now
         } else {
-            seg.classList.add('future');
+            seg.classList.add('future');     // not yet reached
         }
     });
     const pct = (elapsedSeconds / TOTAL_DURATION) * 100;
@@ -650,17 +651,22 @@ async function startWorkout() {
     isRunning = true;
     isPaused = false;
     sessionStartTime = new Date();
-    startTimestamp = Date.now();
     totalPausedMs = 0;
     pauseTimestamp = null;
 
     buildProgressBar();
 
-    // Bring up Web Audio (we're inside a user gesture — required for AudioContext)
+    // Bring up Web Audio (we're inside a user gesture — required for AudioContext).
+    // The FIRST workout has to decode ~26 MP3s here, which takes a few hundred ms.
+    // Start the wall clock AFTER that work so the visual timer and the Web-Audio
+    // scheduled cues share the same t0 — otherwise every cue trails the display
+    // by the decode duration on the first run.
     await ensureAudioCtx();
     await decodeAllAudio();
     generateChimeBuffers();
     startSilentKeepalive();
+
+    startTimestamp = Date.now();
     scheduleAllCues(0);     // pre-schedules chimes + voice for every phase boundary
 
     updateDisplay();         // also fires updateMediaSession(true) since phase index changed
@@ -1035,17 +1041,104 @@ async function getAllSessions() {
 }
 
 // ============================================================
+// Stats / streak summary
+// ============================================================
+const $statsSummary = document.getElementById('stats-summary');
+
+// Local calendar-day key (YYYY-MM-DD in the device's timezone) for a session date.
+function dayKey(d) {
+    const dt = new Date(d);
+    return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+}
+
+// Consecutive-day streak counting back from today (or yesterday, so an
+// as-yet-un-worked-out today doesn't break a run). Multiple sessions in one
+// day count as that single day.
+function computeStreak(dayKeys) {
+    if (dayKeys.size === 0) return 0;
+    const cursor = new Date();
+    // If nothing today but something yesterday, start the count at yesterday.
+    if (!dayKeys.has(dayKey(cursor))) {
+        cursor.setDate(cursor.getDate() - 1);
+        if (!dayKeys.has(dayKey(cursor))) return 0;
+    }
+    let streak = 0;
+    while (dayKeys.has(dayKey(cursor))) {
+        streak++;
+        cursor.setDate(cursor.getDate() - 1);
+    }
+    return streak;
+}
+
+// Start of the current week (Monday 00:00, local).
+function startOfWeek() {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    const dow = (d.getDay() + 6) % 7; // 0 = Monday
+    d.setDate(d.getDate() - dow);
+    return d;
+}
+
+function computeStats(sessions) {
+    const total = sessions.length;
+    const completed = sessions.filter(s => s.completed).length;
+    const totalRunSec = sessions.reduce((sum, s) => sum + ((s.phases && s.phases.run) || 0), 0);
+    const dayKeys = new Set(sessions.map(s => dayKey(s.date)));
+    const streak = computeStreak(dayKeys);
+    const weekStart = startOfWeek();
+    const thisWeek = sessions.filter(s => new Date(s.date) >= weekStart).length;
+    return { total, completed, streak, totalRunSec, thisWeek };
+}
+
+// Whole-minutes label for cumulative run time (e.g. 128 min → "2h 8m").
+function fmtMinutes(totalSec) {
+    const mins = Math.round(totalSec / 60);
+    if (mins < 60) return `${mins}m`;
+    return `${Math.floor(mins / 60)}h ${mins % 60}m`;
+}
+
+function renderStats(sessions) {
+    if (!$statsSummary) return;
+    if (sessions.length === 0) {
+        $statsSummary.style.display = 'none';
+        return;
+    }
+    const st = computeStats(sessions);
+    const streakLabel = st.streak === 1 ? 'day' : 'days';
+    $statsSummary.style.display = 'grid';
+    $statsSummary.innerHTML = `
+        <div class="stat-tile">
+            <span class="stat-num">${st.streak}<span class="stat-unit">${streakLabel}${st.streak > 0 ? ' 🔥' : ''}</span></span>
+            <span class="stat-cap">Streak</span>
+        </div>
+        <div class="stat-tile">
+            <span class="stat-num">${st.thisWeek}</span>
+            <span class="stat-cap">This week</span>
+        </div>
+        <div class="stat-tile">
+            <span class="stat-num">${st.completed}<span class="stat-unit">/ ${st.total}</span></span>
+            <span class="stat-cap">Completed</span>
+        </div>
+        <div class="stat-tile">
+            <span class="stat-num">${fmtMinutes(st.totalRunSec)}</span>
+            <span class="stat-cap">Total run</span>
+        </div>`;
+}
+
+// ============================================================
 // History rendering
 // ============================================================
 async function renderHistory() {
     const sessions = await getAllSessions();
 
     if (sessions.length === 0) {
+        renderStats(sessions);
         $historyList.innerHTML = '<p class="empty-msg">No workouts yet. Start your first session!</p>';
         return;
     }
 
     sessions.sort((a, b) => new Date(b.date) - new Date(a.date));
+    renderStats(sessions);
 
     $historyList.innerHTML = sessions.map(s => `
         <div class="history-entry ${s.completed ? '' : 'incomplete'}">
@@ -1139,15 +1232,23 @@ async function handleSignIn() {
     try {
         $btnSignIn.disabled = true;
         $btnSignIn.textContent = 'Signing in...';
-        const result = await signInWithPopup(auth, googleProvider);
-        currentUser = result.user;
-        updateAuthUI();
-        // Sync both directions
-        await syncLocalToCloud();
-        await syncCloudToLocal();
+        await signInWithPopup(auth, googleProvider);
+        // Don't sync here — onAuthStateChanged fires on sign-in and owns the
+        // bidirectional sync + UI update. Doing it here too double-synced.
     } catch (err) {
         console.error('Sign-in error:', err);
-        if (err.code !== 'auth/popup-closed-by-user') {
+        // Popup blocked (common on mobile Safari/Chrome) → fall back to redirect.
+        if (err.code === 'auth/popup-blocked' ||
+            err.code === 'auth/cancelled-popup-request' ||
+            err.code === 'auth/operation-not-supported-in-this-environment') {
+            try {
+                await signInWithRedirect(auth, googleProvider);
+                return; // page navigates away; getRedirectResult handles the return
+            } catch (rErr) {
+                console.error('Redirect sign-in error:', rErr);
+                alert('Sign-in failed. Please try again.');
+            }
+        } else if (err.code !== 'auth/popup-closed-by-user') {
             alert('Sign-in failed. Please try again.');
         }
     } finally {
@@ -1167,6 +1268,14 @@ async function handleSignOut() {
         console.error('Sign-out error:', err);
     }
 }
+
+// If we came back from a redirect sign-in (mobile popup fallback), surface any
+// error. The actual session is picked up by onAuthStateChanged below.
+getRedirectResult(auth).catch((err) => {
+    if (err && err.code !== 'auth/no-auth-event') {
+        console.error('Redirect result error:', err);
+    }
+});
 
 // Listen for auth state changes (persists across refreshes)
 onAuthStateChanged(auth, async (user) => {

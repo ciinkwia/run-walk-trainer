@@ -1,4 +1,4 @@
-const CACHE_NAME = 'runwalk-v13';
+const CACHE_NAME = 'runwalk-v14';
 
 // App shell assets — code/markup/styles. Network-first so updates land
 // on the next reload without needing uninstall + reinstall.

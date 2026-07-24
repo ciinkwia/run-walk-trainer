@@ -1,6 +1,6 @@
 // Firebase SDK v11 — modular imports from CDN
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.4.0/firebase-app.js';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged }
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged }
     from 'https://www.gstatic.com/firebasejs/11.4.0/firebase-auth.js';
 import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, query, orderBy, serverTimestamp }
     from 'https://www.gstatic.com/firebasejs/11.4.0/firebase-firestore.js';
@@ -21,6 +21,6 @@ const googleProvider = new GoogleAuthProvider();
 
 export {
     auth, firestore, googleProvider,
-    signInWithPopup, signOut, onAuthStateChanged,
+    signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged,
     collection, addDoc, getDocs, deleteDoc, doc, query, orderBy, serverTimestamp
 };

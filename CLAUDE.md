@@ -167,7 +167,7 @@ Firebase config in `firebase-config.js` is a **web API key** which is fine to sh
 ## Gotchas / things to know
 
 ### 1. Bump `CACHE_NAME` in `sw.js` when shipping code/asset changes
-Currently `runwalk-v13`. If you change `app.js`, `style.css`, `index.html`, or any audio clip, bump this. The SW activate step cleans old caches keyed on the version.
+Currently `runwalk-v14`. If you change `app.js`, `style.css`, `index.html`, or any audio clip, bump this. The SW activate step cleans old caches keyed on the version.
 
 ### 1b. App shell is NETWORK-FIRST, static assets are CACHE-FIRST (v13+)
 `sw.js` `isAppShell()` matches `index.html` / `style.css` / `app.js` / `firebase-config.js` / `manifest.json` / trailing-slash root → network-first (try fresh, fall back to cache when offline). Icons + audio MP3s → cache-first (fast, basically never change). This means **code changes land on the next reload** without an uninstall+reinstall. v10/v11/v12 changes were held back on Erica's installed PWA because the old SW was cache-first and kept serving stale CSS even after a new SW activated. Don't revert this unless you have a good reason.
@@ -187,8 +187,8 @@ Save order: IndexedDB → Firestore. Merge rule in `getAllSessions`: local takes
 ### 6. Sync dedupes by ISO date string
 `localDates = new Set(localSessions.map(s => s.date))`. Two sessions at the exact same millisecond would collide, but that's impossible for this app. Don't change `date` to be non-unique.
 
-### 7. Popup sign-in with no redirect fallback
-Unlike Booktracker/SolarNotes, this app only uses `signInWithPopup`. If mobile popup blocking becomes an issue, copy the pattern from Booktracker's `js/firebase.js` (catch `auth/popup-blocked`, `auth/popup-closed-by-user`, `auth/cancelled-popup-request` → `signInWithRedirect`).
+### 7. Popup sign-in with redirect fallback (v14)
+`handleSignIn` tries `signInWithPopup` first, then falls back to `signInWithRedirect` on `auth/popup-blocked`, `auth/cancelled-popup-request`, or `auth/operation-not-supported-in-this-environment` (common on mobile Chrome). `getRedirectResult(auth)` is called once at module load to surface any redirect error; the actual session is picked up by `onAuthStateChanged`. `signInWithRedirect`/`getRedirectResult` are exported from `firebase-config.js`. `auth/popup-closed-by-user` is still swallowed silently (user cancelled on purpose).
 
 ### 8. 8 run + 8 walk variants for variety
 The app randomly picks one of 8 run or walk clips at each phase transition to avoid repetition fatigue over a 30-minute session. If you add or remove variants, update the modulo math in **both** `buildCueEvents()` (used by the scheduler) and `announcePhaseImmediate()` (used by skip): `Math.floor(Math.random() * 8) + 1`.
@@ -229,12 +229,15 @@ The silent keep-alive buffer (`startSilentKeepalive`) is what keeps the OS treat
 ## Pending / future ideas
 
 - Voice density preference UI (chime-only mode, or re-enable pre-warnings for users who want more verbosity)
-- Re-record run/walk voice clips shorter — current ElevenLabs lines are ~2-3s each; ~1s would feel less talky
-- Popup→redirect fallback for mobile sign-in (copy Booktracker's pattern)
+- Re-record run/walk voice clips shorter — current lines are ~2-3s each; ~1s would feel less talky
 - Configurable workout length / interval ratio (currently hardcoded)
-- Weekly streak / stats view in History
-- Background audio during phone-locked state on iOS (currently Android-tested only; iOS likely needs `playsinline` Audio + more aggressive MediaSession work)
+
+**Explicitly out of scope:** iOS background-locked audio. This is an **Android-only** app (Erica's PWA). Don't add iOS-specific audio/session hacks — keep the proven Android scheduler untouched.
+
+**Done:** Weekly streak/stats view in History (v14) · Popup→redirect fallback for mobile sign-in (v14).
 
 ---
+
+**Last updated:** 2026-07-23 — v14 (bug + polish + stats pass): (1) **Layout bug fixed** — a duplicate `.view` / `.view.active` block near the middle of `style.css` was redefining active views as `display:block`, silently defeating the v12 flex timer-fill (the `.timer-ring-container flex:1` never actually applied). Removed the dupe; there's now a comment guard where it was. Confirmed the active view computes to `display:flex` and the ring flex-fills. (2) **First-run audio/timer sync** — `startTimestamp` was set BEFORE `await decodeAllAudio()`, so on the first workout (which decodes ~26 MP3s) every scheduled cue trailed the visual timer by the decode time. Now `startTimestamp = Date.now()` is set immediately before `scheduleAllCues(0)`/`setInterval`, after audio setup, so cues and display share one t0. (3) **Double-sync removed** — `handleSignIn` and `onAuthStateChanged` both ran the full bidirectional sync on sign-in; `handleSignIn` no longer syncs (the listener owns it). (4) **Mobile sign-in redirect fallback** added (see gotcha #7). (5) **Progress bar** now distinguishes `done` (0.55) / `current` (1.0) / `future` (0.28) instead of just future-vs-not. (6) **NEW: stats/streak summary** at the top of History — 4 tiles: consecutive-day streak (🔥; incomplete days still count, breaks only on a fully missed day; today-not-yet-worked-out doesn't break it), this-week count (Mon-start), completed/total, cumulative run time. Pure functions `dayKey`/`computeStreak`/`startOfWeek`/`computeStats`/`fmtMinutes` + `renderStats`; `#stats-summary` grid in `index.html`; `.stats-summary`/`.stat-tile` CSS. iOS background audio was requested then descoped — Android-only app.
 
 **Last updated:** 2026-05-03 — v13: SW now network-first for app shell (HTML/CSS/JS/manifest), cache-first for static assets (icons, audio). Means code changes land on the next reload without uninstall+reinstall — v10/v11/v12 had been held back on Erica's PWA because the old cache-first SW kept serving stale CSS. v12: `.timer-ring-container` got `flex: 1` + `min-height: 240px` so it actually absorbs available vertical space (v10's `width: min(280px, 70vw)` + `margin-top: auto` on voice-settings only moved volume to the bottom but left timer small). Timer digits now scale with `clamp(2.8rem, 11vw, 4rem)`. v11: filled previously-empty `audio/` folder with 26 voice clips generated via Microsoft Edge TTS (`en-AU-NatashaNeural`, Australian female). Generation script at `agentmail/generate_runwalk_audio.py`. v10: initial 100dvh + safe-area layout pass (improved but didn't fully fill — see v12). v9: PNG icons for Android Chrome install prompt (manifest icons were SVG-only, blocking install). v8: synthesized two-tone chimes at every phase boundary, voice announcement layered 500ms behind chime; pre-warning cues dropped to cut chatter (~31 → ~17 voice events). v7: Web Audio refactor for background-proof scheduled cues + MediaSession lock-screen controls.
